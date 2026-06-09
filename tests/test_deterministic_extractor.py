@@ -72,3 +72,21 @@ def test_generic_page_without_payer_name_returns_empty():
     ev = _ev(generic_body)
     result = _extract_products_from_body(ev, CENTENE_ALIASES)
     assert result == set(), f"False positive: generic page returned {result} for Centene"
+
+
+def test_proximity_guard_rejects_distant_product():
+    """Payer mentioned at top, Agentforce mentioned >600 chars later — must NOT extract."""
+    payer_mention = "Devoted Health was founded in 2017 as a Medicare Advantage plan. "
+    filler = "Salesforce held its annual Dreamforce conference in San Francisco. " * 20
+    distant_product = (
+        "Across the broader Salesforce customer base, Agentforce for Healthcare "
+        "is being adopted by leading providers and payers nationwide."
+    )
+    body = payer_mention + filler + distant_product
+    ev = _ev(body)
+    result = _extract_products_from_body(ev, {"Devoted Health", "Devoted"})
+    assert "Agentforce for Healthcare" not in result, (
+        f"Proximity guard failed: Agentforce matched at distance > {600} chars. "
+        f"Body length: {len(body)}, result: {result}"
+    )
+

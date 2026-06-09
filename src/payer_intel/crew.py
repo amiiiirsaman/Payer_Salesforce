@@ -352,26 +352,48 @@ _PRODUCT_PATTERNS: dict[str, list[str]] = {
     ],
 }
 
+# Maximum distance (chars) between a payer-alias mention and a product-pattern
+# match for the match to count. Prevents pages that mention the payer once in a
+# header and discuss unrelated Salesforce products elsewhere from producing
+# false-positive Layer 1 hits (e.g. Devoted Health / Alameda Alliance picking
+# up Agentforce from distant boilerplate).
+_PROXIMITY_WINDOW = 600
+
 
 def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[str]:
     """Layer 1 deterministic extractor.
 
     Returns the set of SalesforceProduct.value strings literally present in
-    ev.full_text. Returns empty set when full_text is None (snippet-only items
-    stay on the LLM path) or when none of the payer aliases appear in the body
-    (false-positive guard against Salesforce cross-link sections that list
-    every cloud regardless of the payer being researched).
+    ev.full_text within ±_PROXIMITY_WINDOW chars of a payer-alias mention.
+    Returns empty set when full_text is None (snippet-only items stay on the
+    LLM path) or when no alias mentions appear in the body.
     """
     if not ev.full_text:
         return set()
-    body_lower = ev.full_text.lower()
-    if not any(alias.lower() in body_lower for alias in payer_aliases if alias):
+    body = ev.full_text
+    body_lower = body.lower()
+    alias_positions: list[int] = []
+    for alias in payer_aliases:
+        if not alias:
+            continue
+        needle = alias.lower()
+        start = 0
+        while True:
+            idx = body_lower.find(needle, start)
+            if idx == -1:
+                break
+            alias_positions.append(idx)
+            start = idx + 1
+    if not alias_positions:
         return set()
     found: set[str] = set()
     for product, patterns in _PRODUCT_PATTERNS.items():
         combined = "|".join(f"(?:{p})" for p in patterns)
-        if re.search(combined, ev.full_text, re.IGNORECASE):
-            found.add(product)
+        for m in re.finditer(combined, body, re.IGNORECASE):
+            mid = (m.start() + m.end()) // 2
+            if any(abs(mid - p) <= _PROXIMITY_WINDOW for p in alias_positions):
+                found.add(product)
+                break
     return found
 
 
