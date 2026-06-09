@@ -268,12 +268,106 @@ def _enrich_with_page_bodies(evidence: list[Evidence]) -> list[Evidence]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Agent 8 — Classifier (Bedrock-backed CrewAI task)
-# ─────────────────────────────────────────────────────────────────────────────
+# Agent 8b — Deterministic Product Extractor (Layer 1)
+# Runs on fetched page bodies only. Python regex, no LLM, no API call.
+# Only fires when a payer alias appears in the body (false-positive guard).
+# ──────────────────────────────────────────────────────────────────────────
+# Keys MUST equal SalesforceProduct.value exactly (no regex escaping in keys).
+# Values are regex patterns; escape special characters only inside patterns.
+_PRODUCT_PATTERNS: dict[str, list[str]] = {
+    "Marketing Cloud Account Engagement (Pardot)": [
+        r"Pardot",
+        r"Account Engagement",
+    ],
+    "Agentforce for Healthcare": [
+        r"Agentforce for Healthcare",
+        r"Agentforce for Health",
+        r"Einstein Copilot for Health",
+        r"Agentforce",
+    ],
+    "Health Cloud": [
+        r"Health Cloud",
+        r"Care Connect",
+        r"prior authori[sz]ation",
+        r"Vlocity Health",
+        r"Vlocity Insurance",
+    ],
+    "Life Sciences Cloud": [r"Life Sciences Cloud"],
+    "Financial Services Cloud": [r"Financial Services Cloud"],
+    "Revenue Cloud (CPQ)": [
+        r"Revenue Cloud",
+        r"\bCPQ\b",
+        r"SteelBrick",
+    ],
+    "Data Cloud": [
+        r"Data Cloud",
+        r"CRM Analytics",
+        r"Tableau CRM",
+        r"Einstein Analytics",
+    ],
+    "Marketing Cloud": [
+        r"Marketing Cloud",
+        r"Marketing Platform",
+        r"\bSFMC\b",
+        r"ExactTarget",
+        r"Email Studio",
+        r"\bet\.com\b",
+    ],
+    "Experience Cloud": [
+        r"Experience Cloud",
+        r"Community Cloud",
+        r"my\.site\.com",
+        r"Digital Experience Cloud",
+    ],
+    "Service Cloud": [
+        r"Service Cloud",
+        r"Field Service Lightning",
+        r"\bFSL\b",
+        r"Service Console",
+        r"Omni.Channel",
+    ],
+    "Sales Cloud": [
+        r"Sales Cloud",
+        r"CareIQ",
+        r"Care IQ",
+    ],
+}
+
+
+def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[str]:
+    """Layer 1 deterministic extractor.
+
+    Returns the set of SalesforceProduct.value strings literally present in
+    ev.full_text. Returns empty set when full_text is None (snippet-only items
+    stay on the LLM path) or when none of the payer aliases appear in the body
+    (false-positive guard against Salesforce cross-link sections that list
+    every cloud regardless of the payer being researched).
+    """
+    if not ev.full_text:
+        return set()
+    body_lower = ev.full_text.lower()
+    if not any(alias.lower() in body_lower for alias in payer_aliases if alias):
+        return set()
+    found: set[str] = set()
+    for product, patterns in _PRODUCT_PATTERNS.items():
+        combined = "|".join(f"(?:{p})" for p in patterns)
+        if re.search(combined, ev.full_text, re.IGNORECASE):
+            found.add(product)
+    return found
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Agent 8 — Classifier (Bedrock-backed CrewAI task; Layer 2)
+# ──────────────────────────────────────────────────────────────────────────
 def _classify_with_llm(
-    payer_name: str, evidence: list[Evidence]
+    payer: dict[str, str], evidence: list[Evidence]
 ) -> tuple[dict[str, list[Evidence]], str]:
     """Return (product_name -> list[Evidence], key_evidence_summary)."""
+    payer_name: str = payer["payer_name"]
+    aliases_raw: str = payer.get("search_aliases") or ""
+    payer_aliases: set[str] = {payer_name} | {
+        a.strip() for a in aliases_raw.split("|") if a.strip()
+    }
     if not evidence:
         return {}, ""
     products_list = "\n".join(f"- {p.value}" for p in SalesforceProduct)
@@ -286,6 +380,7 @@ def _classify_with_llm(
                 "text": (e.full_text or e.snippet)[:3000],
                 "date": e.date,
                 "fingerprint_product": e.matched_product.value if e.matched_product else None,
+                "regex_products": sorted(_extract_products_from_body(e, payer_aliases)),
             }
             for i, e in enumerate(evidence)
         ],
@@ -321,6 +416,11 @@ Rules:
   what Salesforce products the payer appears to use, what the strongest evidence is (cite source
   type and recency, e.g. "a January 2025 Health Cloud admin job posting"), and any caveats.
   If there is no credible evidence, say so plainly. Do NOT invent details that are not in the evidence.
+- REGEX PRE-EXTRACTION: Each evidence item includes a `regex_products` list. These products
+  were identified deterministically by Python regex in the full fetched page body — the product
+  name is literally written on the page. You MUST include every product in `regex_products` in
+  your `mappings` output for that evidence item. You may add additional products if the text
+  clearly supports them, but you may NOT omit any product that appears in `regex_products`.
 - CONSISTENCY RULE: If you mention a Salesforce product by name in the `key_evidence_summary`, you MUST
   include it in the `mappings` dict with at least one supporting evidence index. The narrative and the
   mappings must agree. Do not write about a product in the summary that has no entry in `mappings`,
@@ -365,6 +465,26 @@ EVIDENCE (JSON array):
         if product not in valid_products:
             continue
         out[product] = [evidence[i] for i in idxs if 0 <= i < len(evidence)]
+
+    # ── Post-processing safety net (Layer 1 enforcement) ────────────────────
+    # If the LLM missed a product that regex found explicitly in the page
+    # body, add it here in Python. Deterministic, cannot be overridden by
+    # LLM instruction-following failures.
+    for i, ev in enumerate(evidence):
+        regex_hits = _extract_products_from_body(ev, payer_aliases)
+        for product in regex_hits:
+            if product not in valid_products:
+                continue
+            if product not in out:
+                out[product] = [ev]
+                log.info(
+                    "Post-processing: added %s via regex from evidence[%d] url=%s",
+                    product, i, ev.url,
+                )
+            else:
+                existing_ids = {id(e) for e in out[product]}
+                if id(ev) not in existing_ids:
+                    out[product].append(ev)
     return out, summary
 
 
@@ -445,7 +565,7 @@ def run(seed_path: Path, out_dir: Path) -> Path:
         log.info("Processing payer: %s", p["payer_name"])
         evidence = gather_evidence(p, client)
         if evidence:
-            product_map, key_evidence_summary = _classify_with_llm(p["payer_name"], evidence)
+            product_map, key_evidence_summary = _classify_with_llm(p, evidence)
         else:
             product_map, key_evidence_summary = {}, ""
         rec = assemble_record(p, product_map, evidence)
