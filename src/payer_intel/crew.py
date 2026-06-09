@@ -134,6 +134,22 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
             )
         )
 
+    # Agent 4b — Dreamforce / Agentforce / Einstein Copilot sessions on salesforce.com
+    # (not indexed as news; eligible for v6 page-body fetch since salesforce.com is whitelisted)
+    for r in _safe_search(
+        client.google,
+        f'site:salesforce.com {name_clause} ("Agentforce" OR "Dreamforce" OR "Einstein Copilot")',
+        num=10,
+    ):
+        evidence.append(
+            Evidence(
+                source_type="case_study",
+                url=r.get("link", "") or "",
+                snippet=(r.get("snippet") or "")[:1200],
+                date=r.get("date"),
+            )
+        )
+
     # Agent 5 — Reviews
     for r in _safe_search(client.google, f"{_REVIEW_SITES} {name_clause} Salesforce", num=20):
         evidence.append(
@@ -198,13 +214,26 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
 # Agent 8 — Page Body Enricher: domains whose pages reliably contain named
 # Salesforce product evidence beyond the search snippet teaser.
 _FETCH_DOMAINS: frozenset[str] = frozenset({
+    # Salesforce-owned
     "salesforce.com",
+    # Payer-owned newsrooms / IR
     "news.blueshieldca.com",
+    "newsroom.humana.com",
+    "newsroom.cigna.com",
+    "newsroom.elevancehealth.com",
+    "ir.molinahealthcare.com",
+    "newsroom.kaiserpermanente.org",
+    "newsroom.highmark.com",
+    # Wire services
     "businesswire.com",
     "prnewswire.com",
+    "globenewswire.com",
+    # Trade press
     "fiercehealthcare.com",
     "healthcaredive.com",
     "mobihealthnews.com",
+    "medcitynews.com",
+    "beckershospitalreview.com",
 })
 _MAX_BODY_CHARS = 4000
 _WS_RE = re.compile(r"\s+")
@@ -227,7 +256,12 @@ def _enrich_with_page_bodies(evidence: list[Evidence]) -> list[Evidence]:
             for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
                 tag.decompose()
             text = soup.get_text(separator=" ", strip=True)
-            ev.full_text = _WS_RE.sub(" ", text).strip()[:_MAX_BODY_CHARS]
+            cleaned = _WS_RE.sub(" ", text).strip()
+            # AppExchange pages are JS-rendered; httpx returns a near-empty shell.
+            # Keep the search snippet rather than overwriting with empty body.
+            if host.endswith("appexchange.salesforce.com") and len(cleaned) < 200:
+                continue
+            ev.full_text = cleaned[:_MAX_BODY_CHARS]
         except Exception:  # noqa: BLE001 — best-effort enrichment
             continue
     return evidence
@@ -269,13 +303,18 @@ Rules:
   or uses a clearly equivalent term.
 - Map specific technical terms / legacy product names to their parent clouds:
     "Pardot"                                          ⇒ 'Marketing Cloud Account Engagement (Pardot)'
-    "SFMC", "ExactTarget", "Email Studio", "et.com"   ⇒ 'Marketing Cloud'
+    "SFMC", "ExactTarget", "Email Studio", "et.com", "Marketing Platform"   ⇒ 'Marketing Cloud'
     "Community Cloud", "Digital Experience", "my.site.com", "force.com/s/" ⇒ 'Experience Cloud'
     "Service Console", "Field Service Lightning", "FSL", "Omni-Channel" ⇒ 'Service Cloud'
-    "CRM Analytics", "Tableau CRM", "Einstein Analytics" ⇒ 'Data Cloud' (or 'Sales Cloud' if context is sales pipeline)
+    "CRM Analytics", "Tableau CRM", "Einstein Analytics" ⇒ 'Data Cloud'
+      (use 'Sales Cloud' ONLY when the text explicitly mentions sales pipeline, opportunities, or leads;
+       for healthcare/payer contexts — member analytics, claims data, population health — always map to 'Data Cloud')
     "CPQ", "SteelBrick", "Revenue Cloud"               ⇒ 'Revenue Cloud (CPQ)'
     "Vlocity Health", "Vlocity Insurance", "Health Cloud" ⇒ 'Health Cloud'
     "Agentforce", "Einstein Copilot for Health"        ⇒ 'Agentforce for Healthcare'
+    "CareIQ", "Care IQ"                                ⇒ 'Sales Cloud' (Cigna's CareIQ platform per published case study)
+    "Care Connect"                                     ⇒ 'Health Cloud' (Blue Shield of California's Care Connect per Sep 2023 press release)
+    "prior authorization", "prior auth"                ⇒ 'Health Cloud' (in payer context, prior-auth automation is built on Health Cloud)
 - A generic 'Salesforce' mention with no product hint does NOT map to anything — skip it.
 - One evidence item MAY map to multiple products if it clearly names multiple.
 - The `key_evidence_summary` is a 2-3 sentence plain-English narrative for a BD analyst:
