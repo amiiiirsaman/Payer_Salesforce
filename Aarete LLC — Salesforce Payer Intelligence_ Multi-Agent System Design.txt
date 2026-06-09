@@ -1,0 +1,190 @@
+# Aarete LLC — Salesforce Payer Intelligence: Multi-Agent System Design
+**Prepared for:** Business Development Team, Aarete LLC  
+**Date:** June 2026  
+**Classification:** Internal — BD Strategy
+
+---
+
+## Executive Summary
+
+This document presents the architecture, rationale, and implementation blueprint for an **Agentic AI System** designed to continuously identify US health plans (Payers) that use Salesforce products. The system employs **11 specialized AI agents** orchestrated via a hierarchical workflow to extract, classify, validate, and export intelligence from the open web into a structured Excel report for the BD team.
+
+The system is purpose-built to detect which specific Salesforce Clouds a payer uses — including core CRM products (Sales Cloud, Service Cloud, Experience Cloud), marketing platforms (Marketing Cloud, Marketing Cloud Account Engagement / Pardot), and industry-specific solutions (Health Cloud with Agentforce for Healthcare, Life Sciences Cloud, Financial Services Cloud).
+
+---
+
+## 1. Why a Multi-Agent Architecture?
+
+Web intelligence about enterprise software adoption is inherently fragmented. No single source reliably confirms which Salesforce products a given health plan uses. The evidence is distributed across job postings, press releases, software review sites, implementation partner case studies, and technographic data APIs. A single LLM query cannot effectively scrape, parse, classify, and validate across these disparate modalities simultaneously.
+
+A **multi-agent system** solves this by assigning each intelligence channel to a specialized agent with its own context, tools, and reasoning focus. This mirrors how a human BD research team would operate — with dedicated analysts covering LinkedIn, news monitoring, and partner sites in parallel — but executes at machine speed and scale.
+
+The system is built on the **Hierarchical Orchestration Pattern**, where a central Orchestrator Agent manages task delegation, context passing, and error recovery, while sub-agents operate concurrently on their assigned channels. This is the most capable approach for web intelligence extraction because it achieves:
+
+- **Redundancy:** If one source (e.g., BuiltWith) lacks data on a payer, other sources (e.g., job postings, G2 reviews) compensate.
+- **Specialization:** Each agent is given a focused system prompt and tool set, reducing hallucination and improving extraction accuracy.
+- **Auditability:** Every claim in the final Excel report is traceable to a specific source URL, agent, and date — critical for BD credibility.
+- **Temporal Integrity:** A dedicated Recency Agent ensures the BD team never acts on stale intelligence.
+
+---
+
+## 2. Salesforce Product Taxonomy for Health Plans
+
+The following table defines the Salesforce product categories the system is trained to detect and classify. These map directly to the column headers in the output Excel report.
+
+| Category | Product Name | Payer Use Case |
+| :--- | :--- | :--- |
+| **Core CRM** | Sales Cloud | Broker & group sales pipeline, lead management, quoting |
+| **Core CRM** | Service Cloud | Member contact center, case management, omni-channel support |
+| **Core CRM** | Experience (Community) Cloud | Member portals, broker portals, provider self-service |
+| **Marketing & Engagement** | Marketing Cloud (B2C) | Member engagement campaigns, email, SMS, social |
+| **Marketing & Engagement** | Marketing Cloud Account Engagement (Pardot) | B2B employer group marketing, lead nurturing |
+| **Industry — Healthcare** | Health Cloud (Agentforce for Healthcare) | Care management, utilization management, prior auth, member 360 |
+| **Industry — Healthcare** | Life Sciences Cloud | Specialty pharmacy, clinical trial recruitment |
+| **Industry — Financial** | Financial Services Cloud | Premium billing, revenue cycle, financial advisor workflows |
+| **Platform** | Revenue Cloud (CPQ) | Configure-Price-Quote for insurance products, renewals |
+| **Platform** | Data Cloud | Unified member data, real-time segmentation |
+| **Platform** | Agentforce (AI Agents) | Autonomous AI agents for member services, benefits verification |
+
+---
+
+## 3. Architecture Diagram
+
+![Multi-Agent System Architecture](https://private-us-east-1.manuscdn.com/sessionFile/gAb75jl1a0zJWAf9hw4Gzf/sandbox/uOuD7oguDqRQurtTjUYZi9-images_1780977057197_na1fn_L2hvbWUvdWJ1bnR1L2FhcmV0ZV9kZWxpdmVyeS9hcmNoaXRlY3R1cmVfY2xlYW4.png?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvZ0FiNzVqbDFhMHpKV0FmOWh3NEd6Zi9zYW5kYm94L3VPdUQ3b2d1RHFSUXVydFRqVVlaaTktaW1hZ2VzXzE3ODA5NzcwNTcxOTdfbmExZm5fTDJodmJXVXZkV0oxYm5SMUwyRmhjbVYwWlY5a1pXeHBkbVZ5ZVM5aGNtTm9hWFJsWTNSMWNtVmZZMnhsWVc0LnBuZyIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=Gv2aQTVaqtbYGpbws3-w7LFCAJAWHarrgqADQEerBCbilBJBg8c2fyNl5i~b4ABouJMlLOfjzi8JkoGhqcltkAnqwOPGyRvd31Ix72Vx8ocf-ffiBtVwKSkU3OuWhDUcRzCqhmYWLksieoT8LKXT4Iq7wIvtMDI08CdnMhVgYBDAVWUOsZdCbxf9UGLYl~YNHYpLW70DwoMb-Bse0CpOUWY1ASDe-YKPUp-YFkWpweV2NnuS5e2ZsusIv4cUlnwraOuK4fdf-z7JfWQSu-08c7V5MMRHItLguqRuo~BDljqNNihDEN-smlGsPwWVkiqNXX3p51snmQbM6JGiwMmjJQ__)
+
+The diagram above illustrates the full agent topology. The **Orchestrator Agent** sits at the top of the hierarchy and coordinates five parallel sourcing agents (Agents 3–7). Their outputs converge into the **Product Taxonomy Classifier Agent** (Agent 8), which feeds the **Temporal & Recency Agent** (Agent 9), and finally the **Quality Control Agent** (Agent 10) before the validated data reaches the **Data Structuring & Export Agent** (Agent 11).
+
+---
+
+## 4. Agent Roster and Responsibilities
+
+The following 11 agents form the complete system. The design deliberately separates sourcing, classification, validation, and export into distinct agents to maximize accuracy and maintainability.
+
+| # | Agent Name | Role | Key Tools / APIs |
+| :--- | :--- | :--- | :--- |
+| 1 | **Orchestrator Agent** | Manages workflow, delegates tasks, handles retries | CrewAI / LangGraph Process Manager |
+| 2 | **Target Identification Agent** | Builds and maintains the seed list of US Payers | CMS Medicare Enrollment Data, AHIP Member List |
+| 3 | **Job Posting Analysis Agent** | Detects Salesforce product signals in job requisitions | LinkedIn Jobs API, SerpAPI (Indeed/Glassdoor) |
+| 4 | **PR & News Intelligence Agent** | Monitors press releases for implementation announcements | PR Newswire, Business Wire, Google News API |
+| 5 | **Software Review Analysis Agent** | Mines employee reviews for tech stack mentions | G2 API, Capterra, TrustRadius |
+| 6 | **Case Study & Partner Agent** | Extracts named payer stories from partner sites | BeautifulSoup scraper (Penrod, Silverline, Slalom) |
+| 7 | **Technographic API Agent** | Detects Salesforce infrastructure on payer domains | BuiltWith API, Datanyze API, Clearbit API |
+| 8 | **Product Taxonomy Classifier Agent** | Maps raw text to specific Salesforce Clouds | GPT-4 with structured output schema |
+| 9 | **Temporal & Recency Agent** | Extracts dates; flags signals older than 18 months | Regex date parser + LLM date normalization |
+| 10 | **Quality Control Agent** | Cross-references signals; assigns confidence scores | Internal scoring logic (rule-based + LLM) |
+| 11 | **Data Structuring & Export Agent** | Formats validated data into Excel | pandas, openpyxl |
+
+---
+
+## 5. Quality Control (QC) Logic
+
+The `Quality Control Agent` (Agent 10) is the critical gatekeeper of the system. It applies the following scoring rules before any finding enters the final report:
+
+| Signal Combination | Confidence Score | Action |
+| :--- | :--- | :--- |
+| Official Salesforce Case Study (named payer) | **High** | Include directly |
+| Job Posting (< 12 months) + Technographic Signal | **High** | Include directly |
+| Job Posting (< 12 months) only | **Medium** | Include with flag |
+| G2 Review (< 18 months) only | **Medium** | Include with flag |
+| Single 3rd-party blog post (> 18 months) | **Low** | Exclude or require manual review |
+| Conflicting signals (e.g., one source says Health Cloud, another says Service Cloud) | **Requires Review** | Flag for BD team |
+
+This multi-signal corroboration approach ensures the BD team can trust the data they act on. Confidence scores are included as a dedicated column in the Excel output, allowing the team to prioritize outreach to "High" confidence targets.
+
+---
+
+## 6. Output Excel Schema
+
+The final deliverable is an Excel file named `Aarete_BD_Salesforce_Payer_Intelligence_YYYYMMDD.xlsx` with the following columns:
+
+| Column | Description | Example |
+| :--- | :--- | :--- |
+| `Payer Name` | Official name of the health plan | Humana Inc. |
+| `Payer Type` | National, Regional, Blues Plan, Medicaid MCO | National |
+| `Sales Cloud` | Confirmed usage (Yes / Likely / No / Unknown) | Yes |
+| `Service Cloud` | Confirmed usage | Yes |
+| `Experience Cloud` | Confirmed usage | Likely |
+| `Marketing Cloud` | Confirmed usage | Yes |
+| `Marketing Cloud Account Engagement (Pardot)` | Confirmed usage | No |
+| `Health Cloud` | Confirmed usage | Yes |
+| `Agentforce for Healthcare` | Confirmed usage | Unknown |
+| `Life Sciences Cloud` | Confirmed usage | No |
+| `Financial Services Cloud` | Confirmed usage | Unknown |
+| `Revenue Cloud (CPQ)` | Confirmed usage | Likely |
+| `Data Cloud` | Confirmed usage | Unknown |
+| `Source URLs` | Pipe-delimited list of evidence sources | https://... |
+| `Date Identified` | Most recent signal date | Oct 2025 |
+| `Confidence Score` | High / Medium / Low | High |
+| `BD Notes` | Free-text field for BD team annotations | — |
+
+---
+
+## 7. Technology Stack
+
+The system is implemented in Python and leverages the following libraries and frameworks:
+
+| Component | Technology | Purpose |
+| :--- | :--- | :--- |
+| Agent Orchestration | **CrewAI** (or LangGraph) | Multi-agent workflow management |
+| LLM Backbone | **OpenAI GPT-4 Turbo** | Reasoning, classification, extraction |
+| Web Scraping | **BeautifulSoup4 + Requests** | Static page parsing |
+| Dynamic Scraping | **Playwright / Selenium** | JavaScript-rendered pages (LinkedIn) |
+| Technographic APIs | **BuiltWith API, Datanyze** | Tech stack detection |
+| News Monitoring | **SerpAPI / Google News API** | Press release discovery |
+| Data Processing | **pandas** | DataFrame manipulation |
+| Excel Export | **openpyxl** | `.xlsx` file generation |
+| Scheduling | **APScheduler / GitHub Actions** | Weekly automated runs |
+
+---
+
+## 8. GitHub Copilot Instructions
+
+The accompanying `.py` file (`salesforce_payer_intelligence_agents.py`) is structured for GitHub Copilot-assisted development. Follow these steps to extend the system:
+
+**Step 1: Install Dependencies**
+```bash
+pip install crewai langchain-openai pandas openpyxl playwright beautifulsoup4 requests
+playwright install chromium
+```
+
+**Step 2: Set Environment Variables**
+```bash
+export OPENAI_API_KEY="your-key-here"
+export BUILTWITH_API_KEY="your-key-here"
+export SERPAPI_API_KEY="your-key-here"
+```
+
+**Step 3: Implement Tool Functions (Copilot Prompts)**
+
+In the `# 2. Custom Tools` section of the `.py` file, use the following Copilot prompts to generate actual scraping logic:
+
+- `# Copilot: Implement LinkedIn job search for {payer_name} using SerpAPI and return job descriptions mentioning Salesforce`
+- `# Copilot: Implement BuiltWith API call for {payer_domain} and return technology list`
+- `# Copilot: Scrape G2 reviews for {payer_name} and extract sentences mentioning Salesforce products`
+
+**Step 4: Run the System**
+```bash
+python salesforce_payer_intelligence_agents.py
+```
+
+**Step 5: Schedule Weekly Runs**
+
+Add a `.github/workflows/weekly_run.yml` file with a `schedule: cron: '0 8 * * 1'` trigger to run the system every Monday morning, keeping the BD team's intelligence current.
+
+---
+
+## 9. Why This System is Superior to Manual Research
+
+| Dimension | Manual BD Research | This Agentic System |
+| :--- | :--- | :--- |
+| **Coverage** | 5–10 payers per analyst per week | 100+ payers per run |
+| **Source Diversity** | 1–2 sources typically checked | 5 parallel source channels |
+| **Recency Enforcement** | Depends on analyst diligence | Automated 18-month flag |
+| **Consistency** | Varies by analyst | Deterministic classification logic |
+| **Auditability** | Notes in spreadsheets | Source URLs in every row |
+| **Scalability** | Linear with headcount | Scales with API rate limits |
+| **Update Frequency** | Ad hoc | Weekly scheduled runs |
+
+---
+
+*This document and the accompanying Python code are proprietary to Aarete LLC. The system design is intended for internal BD operations only.*

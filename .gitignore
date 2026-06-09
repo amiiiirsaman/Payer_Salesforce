@@ -1,0 +1,30 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# CrewAI / LiteLLM caches
+.crewai/
+.litellm_cache/
+
+# Generated outputs
+out/
+*.xlsx
+
+# Editor / agent artifacts
+.vscode/
+.idea/
+.github/prompts/
+*.swp
+.DS_Store

@@ -1,0 +1,16 @@
+payer_name,domain,payer_type
+Humana Inc.,humana.com,National
+Centene Corporation,centene.com,National
+Elevance Health,elevancehealth.com,National
+UnitedHealthcare,uhc.com,National
+CVS Health (Aetna),aetna.com,National
+Cigna Healthcare,cigna.com,National
+Kaiser Permanente,kp.org,National
+Molina Healthcare,molinahealthcare.com,National
+Blue Cross Blue Shield of Michigan,bcbsm.com,Blues Plan
+Blue Shield of California,blueshieldca.com,Blues Plan
+Highmark Health,highmark.com,Blues Plan
+Independence Blue Cross,ibx.com,Blues Plan
+Florida Blue,floridablue.com,Blues Plan
+HCSC,hcsc.com,Blues Plan
+WellCare,wellcare.com,Medicaid MCO
