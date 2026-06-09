@@ -10,6 +10,10 @@ from typing import Iterable
 
 from crewai import Crew, Process, Task
 
+from urllib.parse import urlparse
+
+from bs4 import BeautifulSoup
+
 from .agents import (
     case_study_agent,
     classifier_agent,
@@ -187,7 +191,46 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
             continue
         seen.add(key)
         out.append(e)
+    out = _enrich_with_page_bodies(out)
     return out
+
+
+# Agent 8 — Page Body Enricher: domains whose pages reliably contain named
+# Salesforce product evidence beyond the search snippet teaser.
+_FETCH_DOMAINS: frozenset[str] = frozenset({
+    "salesforce.com",
+    "news.blueshieldca.com",
+    "businesswire.com",
+    "prnewswire.com",
+    "fiercehealthcare.com",
+    "healthcaredive.com",
+    "mobihealthnews.com",
+})
+_MAX_BODY_CHARS = 4000
+_WS_RE = re.compile(r"\s+")
+
+
+def _enrich_with_page_bodies(evidence: list[Evidence]) -> list[Evidence]:
+    from .tools.fetcher import fetch
+
+    for ev in evidence:
+        if not ev.url:
+            continue
+        host = (urlparse(ev.url).hostname or "").lower()
+        if not any(host == d or host.endswith("." + d) for d in _FETCH_DOMAINS):
+            continue
+        resp = fetch(ev.url, timeout=15.0)
+        if resp is None:
+            continue
+        try:
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+                tag.decompose()
+            text = soup.get_text(separator=" ", strip=True)
+            ev.full_text = _WS_RE.sub(" ", text).strip()[:_MAX_BODY_CHARS]
+        except Exception:  # noqa: BLE001 — best-effort enrichment
+            continue
+    return evidence
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,7 +249,7 @@ def _classify_with_llm(
                 "i": i,
                 "source_type": e.source_type,
                 "url": e.url,
-                "snippet": e.snippet[:1200],
+                "text": (e.full_text or e.snippet)[:3000],
                 "date": e.date,
                 "fingerprint_product": e.matched_product.value if e.matched_product else None,
             }
@@ -222,7 +265,7 @@ ALLOWED PRODUCTS (use these exact strings as JSON keys):
 {products_list}
 
 Rules:
-- Only assign an evidence item to a product if the snippet (or its fingerprint_product) explicitly names that product
+- Only assign an evidence item to a product if the text (or its fingerprint_product) explicitly names that product
   or uses a clearly equivalent term.
 - Map specific technical terms / legacy product names to their parent clouds:
     "Pardot"                                          ⇒ 'Marketing Cloud Account Engagement (Pardot)'

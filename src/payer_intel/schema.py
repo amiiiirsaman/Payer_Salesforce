@@ -43,6 +43,7 @@ class Evidence(BaseModel):
     snippet: str = ""
     date: Optional[str] = None  # ISO-ish or human; recency agent normalizes
     matched_product: Optional[SalesforceProduct] = None
+    full_text: Optional[str] = None  # populated by page-body enricher for high-priority URLs
 
 
 class SalesforceSignal(BaseModel):
