@@ -60,6 +60,16 @@ _PARTNER_SITES = (
     "OR site:slalom.com OR site:deloitte.com OR site:accenture.com "
     "OR site:cognizant.com OR site:ibm.com"
 )
+_COMMUNITY_SITES = "site:trailhead.salesforce.com OR site:appexchange.salesforce.com"
+_JOB_PRODUCT_TERMS = (
+    'Salesforce OR "Sales Cloud" OR "Service Cloud" OR "Health Cloud" '
+    'OR "Marketing Cloud" OR "Experience Cloud" OR "Data Cloud" '
+    'OR Pardot OR ExactTarget OR "CRM Analytics" OR Agentforce'
+)
+_NEWS_PRODUCT_TERMS = (
+    'Salesforce OR "Health Cloud" OR "Data Cloud" OR "Marketing Cloud" '
+    'OR Agentforce'
+)
 
 
 def _safe_search(fn, *args, **kwargs) -> list[dict]:
@@ -79,8 +89,9 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
     quoted = f'"{name}"'
     evidence: list[Evidence] = []
 
-    # Agent 3 — Jobs
-    for r in _safe_search(client.google_jobs, f"{quoted} Salesforce", num=20):
+    # Agent 3 — Jobs (broadened: explicit cloud names catch postings where
+    # 'Salesforce' is not adjacent to the product name)
+    for r in _safe_search(client.google_jobs, f"{quoted} ({_JOB_PRODUCT_TERMS})", num=20):
         evidence.append(
             Evidence(
                 source_type="job_posting",
@@ -90,8 +101,8 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
             )
         )
 
-    # Agent 4 — News
-    for r in _safe_search(client.google_news, f"{quoted} Salesforce", num=20):
+    # Agent 4 — News (broadened with product terms)
+    for r in _safe_search(client.google_news, f"{quoted} ({_NEWS_PRODUCT_TERMS})", num=20):
         evidence.append(
             Evidence(
                 source_type="news",
@@ -117,6 +128,19 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         evidence.append(
             Evidence(
                 source_type="case_study",
+                url=r.get("link", "") or "",
+                snippet=r.get("snippet", ""),
+                date=r.get("date"),
+            )
+        )
+
+    # Agent 6.5 — Trailblazer Community / AppExchange (high-signal source for
+    # CVS Sales Cloud and BCBSM Experience Cloud in prior runs). Mapped to
+    # 'review' so existing QC recency rules apply.
+    for r in _safe_search(client.google, f"{_COMMUNITY_SITES} {quoted}", num=20):
+        evidence.append(
+            Evidence(
+                source_type="review",
                 url=r.get("link", "") or "",
                 snippet=r.get("snippet", ""),
                 date=r.get("date"),
@@ -164,7 +188,7 @@ def _classify_with_llm(
                 "i": i,
                 "source_type": e.source_type,
                 "url": e.url,
-                "snippet": e.snippet[:600],
+                "snippet": e.snippet[:1200],
                 "date": e.date,
                 "fingerprint_product": e.matched_product.value if e.matched_product else None,
             }
@@ -181,8 +205,16 @@ ALLOWED PRODUCTS (use these exact strings as JSON keys):
 
 Rules:
 - Only assign an evidence item to a product if the snippet (or its fingerprint_product) explicitly names that product
-  or uses a clearly equivalent term (e.g. 'Pardot' ⇒ 'Marketing Cloud Account Engagement (Pardot)';
-  'SFMC' ⇒ 'Marketing Cloud'; 'Community Cloud' ⇒ 'Experience Cloud').
+  or uses a clearly equivalent term.
+- Map specific technical terms / legacy product names to their parent clouds:
+    "Pardot"                                          ⇒ 'Marketing Cloud Account Engagement (Pardot)'
+    "SFMC", "ExactTarget", "Email Studio", "et.com"   ⇒ 'Marketing Cloud'
+    "Community Cloud", "Digital Experience", "my.site.com", "force.com/s/" ⇒ 'Experience Cloud'
+    "Service Console", "Field Service Lightning", "FSL", "Omni-Channel" ⇒ 'Service Cloud'
+    "CRM Analytics", "Tableau CRM", "Einstein Analytics" ⇒ 'Data Cloud' (or 'Sales Cloud' if context is sales pipeline)
+    "CPQ", "SteelBrick", "Revenue Cloud"               ⇒ 'Revenue Cloud (CPQ)'
+    "Vlocity Health", "Vlocity Insurance", "Health Cloud" ⇒ 'Health Cloud'
+    "Agentforce", "Einstein Copilot for Health"        ⇒ 'Agentforce for Healthcare'
 - A generic 'Salesforce' mention with no product hint does NOT map to anything — skip it.
 - One evidence item MAY map to multiple products if it clearly names multiple.
 - The `key_evidence_summary` is a 2-3 sentence plain-English narrative for a BD analyst:
