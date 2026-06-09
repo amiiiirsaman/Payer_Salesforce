@@ -33,7 +33,7 @@ def test_recent_job_only_is_medium_likely():
 
 
 def test_stale_only_is_low_unknown():
-    evs = [Evidence(source_type="review", url="https://r", date=_d(900))]
+    evs = [Evidence(source_type="review", url="https://r", date=_d(750))]
     r = score(SalesforceProduct.MARKETING_CLOUD, evs)
     assert r.confidence == ConfidenceScore.LOW
 

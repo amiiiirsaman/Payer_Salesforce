@@ -20,7 +20,7 @@ class QCResult:
 
 
 _RECENT_JOB_DAYS = 365  # < 12 months
-_RECENT_REVIEW_DAYS = 548  # < 18 months
+_RECENT_REVIEW_DAYS = 730  # < 24 months
 _STALE_DAYS = 548
 
 

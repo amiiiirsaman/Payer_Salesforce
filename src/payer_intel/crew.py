@@ -221,6 +221,10 @@ Rules:
   what Salesforce products the payer appears to use, what the strongest evidence is (cite source
   type and recency, e.g. "a January 2025 Health Cloud admin job posting"), and any caveats.
   If there is no credible evidence, say so plainly. Do NOT invent details that are not in the evidence.
+- CONSISTENCY RULE: If you mention a Salesforce product by name in the `key_evidence_summary`, you MUST
+  include it in the `mappings` dict with at least one supporting evidence index. The narrative and the
+  mappings must agree. Do not write about a product in the summary that has no entry in `mappings`,
+  and do not omit from `mappings` any product you reference in the summary.
 - Output STRICT JSON only — no prose outside the JSON, no markdown fences. Schema:
   {{"mappings": {{"<Product Name>": [<evidence index>, ...], ...}},
     "key_evidence_summary": "<2-3 sentence narrative>"}}
