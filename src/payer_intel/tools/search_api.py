@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 import threading
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
 import httpx
@@ -100,10 +102,43 @@ def _normalize_news(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 "title": it.get("title", ""),
                 "link": it.get("link") or it.get("url", ""),
                 "snippet": it.get("snippet") or it.get("description", ""),
-                "date": it.get("date") or it.get("published_at"),
+                "date": _resolve_relative_date(it.get("date") or it.get("published_at")),
             }
         )
     return out
+
+
+_REL_PATTERNS = [
+    (re.compile(r"^\s*(\d+)\s+day[s]?\s+ago\s*$", re.I), lambda n: n),
+    (re.compile(r"^\s*(\d+)\s+week[s]?\s+ago\s*$", re.I), lambda n: n * 7),
+    (re.compile(r"^\s*(\d+)\s+month[s]?\s+ago\s*$", re.I), lambda n: n * 30),
+    (re.compile(r"^\s*(\d+)\s+hour[s]?\s+ago\s*$", re.I), lambda n: 0),
+    (re.compile(r"^\s*(\d+)\s+minute[s]?\s+ago\s*$", re.I), lambda n: 0),
+]
+
+
+def _resolve_relative_date(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    try:
+        datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return s
+    except ValueError:
+        pass
+    low = s.lower()
+    today = datetime.utcnow().date()
+    if low in ("today", "just now"):
+        return today.strftime("%Y-%m-%d")
+    if low == "yesterday":
+        return (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    for pat, to_days in _REL_PATTERNS:
+        m = pat.match(s)
+        if m:
+            return (today - timedelta(days=to_days(int(m.group(1))))).strftime("%Y-%m-%d")
+    return None
 
 
 def _normalize_jobs(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -116,7 +151,9 @@ def _normalize_jobs(items: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
                 or (it.get("apply_links") or [{}])[0].get("link", "")
                 or it.get("share_link", ""),
                 "snippet": it.get("description", "")[:2000],
-                "date": it.get("posted_at") or it.get("detected_extensions", {}).get("posted_at"),
+                "date": _resolve_relative_date(
+                    it.get("posted_at") or it.get("detected_extensions", {}).get("posted_at")
+                ),
                 "company": it.get("company_name", ""),
                 "location": it.get("location", ""),
             }
