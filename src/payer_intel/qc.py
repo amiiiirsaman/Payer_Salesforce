@@ -58,23 +58,33 @@ def score(
     recent_review = any(
         e.source_type == "review" and _is_within(e.date, _RECENT_REVIEW_DAYS) for e in evs
     )
+    any_review = "review" in types
     any_news_recent = any(
         e.source_type == "news" and _is_within(e.date, _RECENT_JOB_DAYS) for e in evs
     )
+    any_news = "news" in types
 
-    # §5 rules
+    # 1. Official case study — strongest signal
     if has_case_study:
         return QCResult(UsageVerdict.YES, ConfidenceScore.HIGH, "official case study")
+    # 2-4. Multi-source corroboration anchored on a recent job posting
+    if recent_job and recent_review:
+        return QCResult(UsageVerdict.YES, ConfidenceScore.HIGH, "recent job + recent review")
+    if recent_job and any_news_recent:
+        return QCResult(UsageVerdict.YES, ConfidenceScore.HIGH, "recent job + recent news")
     if recent_job and has_tech:
         return QCResult(UsageVerdict.YES, ConfidenceScore.HIGH, "recent job + technographic")
-    if any_news_recent and has_tech:
-        return QCResult(UsageVerdict.YES, ConfidenceScore.HIGH, "recent news + technographic")
+    # 5-8. Single recent signal → Likely / Medium
     if recent_job:
         return QCResult(UsageVerdict.LIKELY, ConfidenceScore.MEDIUM, "recent job posting only")
     if recent_review:
         return QCResult(UsageVerdict.LIKELY, ConfidenceScore.MEDIUM, "recent review only")
+    if any_news_recent:
+        return QCResult(UsageVerdict.LIKELY, ConfidenceScore.MEDIUM, "recent news only")
     if has_tech:
         return QCResult(UsageVerdict.LIKELY, ConfidenceScore.MEDIUM, "technographic only")
-    if any_job:
-        return QCResult(UsageVerdict.LIKELY, ConfidenceScore.LOW, "stale job posting")
-    return QCResult(UsageVerdict.UNKNOWN, ConfidenceScore.LOW, "only weak/stale signals")
+    # 9. Only stale signals
+    if any_job or any_review or any_news:
+        return QCResult(UsageVerdict.UNKNOWN, ConfidenceScore.LOW, "only stale signals")
+    # 10. Fallback
+    return QCResult(UsageVerdict.UNKNOWN, ConfidenceScore.LOW, "no qualifying signals")

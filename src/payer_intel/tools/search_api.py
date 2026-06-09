@@ -69,9 +69,11 @@ class SearchApiClient:
         items = data.get("organic_results") or data.get("news_results") or []
         return _normalize_news(items)
 
-    def google_jobs(self, query: str, location: str = "United States") -> list[dict[str, Any]]:
+    def google_jobs(
+        self, query: str, location: str = "United States", num: int = 10
+    ) -> list[dict[str, Any]]:
         data = self._request(
-            {"engine": "google_jobs", "q": query, "location": location}
+            {"engine": "google_jobs", "q": query, "location": location, "num": num}
         )
         return _normalize_jobs(data.get("jobs") or data.get("jobs_results") or [])
 

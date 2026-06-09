@@ -57,7 +57,8 @@ def load_seed(path: Path) -> list[dict[str, str]]:
 _REVIEW_SITES = "site:g2.com OR site:capterra.com OR site:trustradius.com"
 _PARTNER_SITES = (
     "site:salesforce.com OR site:silverlinecrm.com OR site:penrod.co "
-    "OR site:slalom.com OR site:deloitte.com OR site:accenture.com"
+    "OR site:slalom.com OR site:deloitte.com OR site:accenture.com "
+    "OR site:cognizant.com OR site:ibm.com"
 )
 
 
@@ -79,7 +80,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
     evidence: list[Evidence] = []
 
     # Agent 3 — Jobs
-    for r in _safe_search(client.google_jobs, f"{quoted} Salesforce"):
+    for r in _safe_search(client.google_jobs, f"{quoted} Salesforce", num=20):
         evidence.append(
             Evidence(
                 source_type="job_posting",
@@ -90,7 +91,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         )
 
     # Agent 4 — News
-    for r in _safe_search(client.google_news, f"{quoted} Salesforce"):
+    for r in _safe_search(client.google_news, f"{quoted} Salesforce", num=20):
         evidence.append(
             Evidence(
                 source_type="news",
@@ -101,7 +102,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         )
 
     # Agent 5 — Reviews
-    for r in _safe_search(client.google, f"{_REVIEW_SITES} {quoted} Salesforce"):
+    for r in _safe_search(client.google, f"{_REVIEW_SITES} {quoted} Salesforce", num=20):
         evidence.append(
             Evidence(
                 source_type="review",
@@ -112,7 +113,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         )
 
     # Agent 6 — Case studies / partners
-    for r in _safe_search(client.google, f"{_PARTNER_SITES} {quoted} Salesforce case study"):
+    for r in _safe_search(client.google, f"{_PARTNER_SITES} {quoted} Salesforce case study", num=20):
         evidence.append(
             Evidence(
                 source_type="case_study",
@@ -150,10 +151,12 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent 8 — Classifier (Bedrock-backed CrewAI task)
 # ─────────────────────────────────────────────────────────────────────────────
-def _classify_with_llm(payer_name: str, evidence: list[Evidence]) -> dict[str, list[Evidence]]:
-    """Return product_name -> list[Evidence] supporting that product."""
+def _classify_with_llm(
+    payer_name: str, evidence: list[Evidence]
+) -> tuple[dict[str, list[Evidence]], str]:
+    """Return (product_name -> list[Evidence], key_evidence_summary)."""
     if not evidence:
-        return {}
+        return {}, ""
     products_list = "\n".join(f"- {p.value}" for p in SalesforceProduct)
     evidence_blob = json.dumps(
         [
@@ -170,7 +173,8 @@ def _classify_with_llm(payer_name: str, evidence: list[Evidence]) -> dict[str, l
         ensure_ascii=False,
     )
     description = f"""
-You are mapping evidence about the US health plan **{payer_name}** to specific Salesforce products.
+You are mapping evidence about the US health plan **{payer_name}** to specific Salesforce products,
+and writing a short narrative summary suitable for a business-development analyst.
 
 ALLOWED PRODUCTS (use these exact strings as JSON keys):
 {products_list}
@@ -181,8 +185,13 @@ Rules:
   'SFMC' ⇒ 'Marketing Cloud'; 'Community Cloud' ⇒ 'Experience Cloud').
 - A generic 'Salesforce' mention with no product hint does NOT map to anything — skip it.
 - One evidence item MAY map to multiple products if it clearly names multiple.
-- Output STRICT JSON only — no prose, no markdown fences. Schema:
-  {{"mappings": {{"<Product Name>": [<evidence index>, ...], ...}}}}
+- The `key_evidence_summary` is a 2-3 sentence plain-English narrative for a BD analyst:
+  what Salesforce products the payer appears to use, what the strongest evidence is (cite source
+  type and recency, e.g. "a January 2025 Health Cloud admin job posting"), and any caveats.
+  If there is no credible evidence, say so plainly. Do NOT invent details that are not in the evidence.
+- Output STRICT JSON only — no prose outside the JSON, no markdown fences. Schema:
+  {{"mappings": {{"<Product Name>": [<evidence index>, ...], ...}},
+    "key_evidence_summary": "<2-3 sentence narrative>"}}
 - Omit products with zero supporting evidence.
 
 EVIDENCE (JSON array):
@@ -191,7 +200,10 @@ EVIDENCE (JSON array):
 
     task = Task(
         description=description,
-        expected_output='Strict JSON: {"mappings": {"<Product>": [<idx>, ...]}}',
+        expected_output=(
+            'Strict JSON: {"mappings": {"<Product>": [<idx>, ...]}, '
+            '"key_evidence_summary": "<2-3 sentences>"}'
+        ),
         agent=classifier_agent(),
     )
     crew = Crew(
@@ -208,15 +220,16 @@ EVIDENCE (JSON array):
         data = json.loads(text)
     except json.JSONDecodeError:
         log.warning("Classifier returned non-JSON; raw=%r", text[:300])
-        return {}
+        return {}, ""
     mappings: dict[str, list[int]] = data.get("mappings", {})
+    summary: str = (data.get("key_evidence_summary") or "").strip()
     valid_products = {p.value for p in SalesforceProduct}
     out: dict[str, list[Evidence]] = {}
     for product, idxs in mappings.items():
         if product not in valid_products:
             continue
         out[product] = [evidence[i] for i in idxs if 0 <= i < len(evidence)]
-    return out
+    return out, summary
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -295,8 +308,12 @@ def run(seed_path: Path, out_dir: Path) -> Path:
     for p in payers:
         log.info("Processing payer: %s", p["payer_name"])
         evidence = gather_evidence(p, client)
-        product_map = _classify_with_llm(p["payer_name"], evidence) if evidence else {}
+        if evidence:
+            product_map, key_evidence_summary = _classify_with_llm(p["payer_name"], evidence)
+        else:
+            product_map, key_evidence_summary = {}, ""
         rec = assemble_record(p, product_map, evidence)
+        rec.key_evidence = key_evidence_summary
         records.append(rec)
 
     return write_excel(records, out_dir)

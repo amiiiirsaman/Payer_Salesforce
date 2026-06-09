@@ -9,7 +9,7 @@ from ..schema import SalesforceProduct
 
 # (product, regex). First-match wins per product; multiple products may match.
 _PATTERNS: list[tuple[SalesforceProduct, re.Pattern[str]]] = [
-    (SalesforceProduct.EXPERIENCE_CLOUD, re.compile(r"my\.site\.com|force\.com/s/|\.lightning\.force\.com", re.I)),
+    (SalesforceProduct.EXPERIENCE_CLOUD, re.compile(r"my\.site\.com|force\.com/s/|\.lightning\.force\.com|community\.force\.com", re.I)),
     (SalesforceProduct.SERVICE_CLOUD, re.compile(r"my\.salesforce\.com|service-cloud|servicecloud", re.I)),
     (SalesforceProduct.SALES_CLOUD, re.compile(r"sales[-\s]?cloud|sfdc-lightning", re.I)),
     (SalesforceProduct.MARKETING_CLOUD, re.compile(r"exacttarget\.com|marketingcloud\.com|cloud\.s7\.exct\.net|et\.com|mc\.[a-z0-9-]+\.salesforce-experience\.com", re.I)),
@@ -22,8 +22,7 @@ _PATTERNS: list[tuple[SalesforceProduct, re.Pattern[str]]] = [
     (SalesforceProduct.LIFE_SCIENCES_CLOUD, re.compile(r"life sciences cloud", re.I)),
 ]
 
-_GENERIC_SF = re.compile(r"salesforce", re.I)
-_PATHS = ["/", "/members", "/login", "/careers", "/about"]
+_PATHS = ["/", "/members", "/login", "/careers", "/about", "/s/login", "/s/", "/contact-us"]
 
 
 @dataclass
@@ -58,15 +57,6 @@ def fingerprint_domain(domain: str) -> list[FingerprintHit]:
                     continue
                 seen.add(key)
                 hits.append(FingerprintHit(product=product, url=str(resp.url), matched=m.group(0)))
-        # Generic Salesforce mention without a specific product match → low-signal hint
-        if not hits and _GENERIC_SF.search(blob):
-            hits.append(
-                FingerprintHit(
-                    product=SalesforceProduct.SERVICE_CLOUD,
-                    url=str(resp.url),
-                    matched="salesforce (generic)",
-                )
-            )
     return hits
 
 

@@ -47,3 +47,19 @@ def test_no_signal_returns_empty():
         m.route().mock(return_value=httpx.Response(200, text="<html><body>nothing</body></html>"))
         hits = fingerprint_domain("plain.com")
     assert hits == []
+
+
+def test_generic_salesforce_word_does_not_synthesize_service_cloud():
+    """A page that only mentions the word 'salesforce' (e.g. job perk, press release
+    boilerplate) must NOT trigger a synthetic SERVICE_CLOUD hit."""
+    with respx.mock(assert_all_called=False) as m:
+        m.route().mock(
+            return_value=httpx.Response(
+                200,
+                text="<html><body>Our team uses Salesforce daily.</body></html>",
+            )
+        )
+        hits = fingerprint_domain("example.com")
+    assert hits == []
+    products = {h.product for h in hits}
+    assert SalesforceProduct.SERVICE_CLOUD not in products

@@ -61,6 +61,7 @@ class PayerRecord(BaseModel):
     date_identified: str = ""
     confidence: ConfidenceScore = ConfidenceScore.LOW
     bd_notes: str = ""
+    key_evidence: str = ""
 
 
 EXCEL_COLUMNS: list[str] = [
@@ -71,4 +72,5 @@ EXCEL_COLUMNS: list[str] = [
     "Date Identified",
     "Confidence Score",
     "BD Notes",
+    "Key Evidence",
 ]
