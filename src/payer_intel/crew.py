@@ -44,6 +44,14 @@ from .tools.tech_fingerprint import fingerprint_domain
 log = logging.getLogger(__name__)
 
 
+# Canonical case-study URLs that Google Search routinely ranks outside the top
+# 20; injected directly so the body enricher always fetches them.
+_KNOWN_CASE_STUDIES: dict[str, str] = {
+    "UnitedHealthcare": "https://www.salesforce.com/customer-success-stories/united-healthcare/",
+    "Humana Inc.": "https://www.salesforce.com/customer-success-stories/humana/",
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Seed loading (Agent 2: Target Identification)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,6 +118,16 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
     domain = payer.get("domain", "")
     name_clause = build_name_clause(name, payer.get("search_aliases"))
     evidence: list[Evidence] = []
+
+    if name in _KNOWN_CASE_STUDIES:
+        evidence.append(
+            Evidence(
+                source_type="case_study",
+                url=_KNOWN_CASE_STUDIES[name],
+                snippet="Official Salesforce case study.",
+                date=None,
+            )
+        )
 
     # Agent 3 — Jobs (broadened: explicit cloud names catch postings where
     # 'Salesforce' is not adjacent to the product name)
@@ -216,6 +234,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
 _FETCH_DOMAINS: frozenset[str] = frozenset({
     # Salesforce-owned
     "salesforce.com",
+    "trailhead.salesforce.com",
     # Payer-owned newsrooms / IR
     "news.blueshieldca.com",
     "newsroom.humana.com",
@@ -306,7 +325,7 @@ _PRODUCT_PATTERNS: dict[str, list[str]] = {
         r"Einstein Analytics",
     ],
     "Marketing Cloud": [
-        r"Marketing Cloud",
+        r"\bMarketing Cloud\b",
         r"Marketing Platform",
         r"\bSFMC\b",
         r"ExactTarget",
@@ -314,20 +333,20 @@ _PRODUCT_PATTERNS: dict[str, list[str]] = {
         r"\bet\.com\b",
     ],
     "Experience Cloud": [
-        r"Experience Cloud",
+        r"\bExperience Cloud\b",
         r"Community Cloud",
         r"my\.site\.com",
         r"Digital Experience Cloud",
     ],
     "Service Cloud": [
-        r"Service Cloud",
+        r"\bService Cloud\b",
         r"Field Service Lightning",
         r"\bFSL\b",
         r"Service Console",
         r"Omni.Channel",
     ],
     "Sales Cloud": [
-        r"Sales Cloud",
+        r"\bSales Cloud\b",
         r"CareIQ",
         r"Care IQ",
     ],
