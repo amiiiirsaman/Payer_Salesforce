@@ -56,7 +56,11 @@ def load_seed(path: Path) -> list[dict[str, str]]:
 # ─────────────────────────────────────────────────────────────────────────────
 _REVIEW_SITES = "site:g2.com OR site:capterra.com OR site:trustradius.com"
 _PARTNER_SITES = (
-    "site:salesforce.com OR site:silverlinecrm.com OR site:penrod.co "
+    "site:salesforce.com/customer-success-stories "
+    "OR site:salesforce.com/news/stories "
+    "OR site:salesforce.com/blog "
+    "OR site:salesforce.com/resources/customer-stories "
+    "OR site:silverlinecrm.com OR site:penrod.co "
     "OR site:slalom.com OR site:deloitte.com OR site:accenture.com "
     "OR site:cognizant.com OR site:ibm.com"
 )
@@ -70,6 +74,20 @@ _NEWS_PRODUCT_TERMS = (
     'Salesforce OR "Health Cloud" OR "Data Cloud" OR "Marketing Cloud" '
     'OR Agentforce'
 )
+
+
+def build_name_clause(name: str, aliases_raw: str | None) -> str:
+    names = [name] + [a.strip() for a in (aliases_raw or "").split("|") if a.strip()]
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for n in names:
+        if n.lower() in seen:
+            continue
+        seen.add(n.lower())
+        deduped.append(n)
+    if len(deduped) == 1:
+        return f'"{deduped[0]}"'
+    return "(" + " OR ".join(f'"{n}"' for n in deduped) + ")"
 
 
 def _safe_search(fn, *args, **kwargs) -> list[dict]:
@@ -86,12 +104,12 @@ def _safe_search(fn, *args, **kwargs) -> list[dict]:
 def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evidence]:
     name = payer["payer_name"]
     domain = payer.get("domain", "")
-    quoted = f'"{name}"'
+    name_clause = build_name_clause(name, payer.get("search_aliases"))
     evidence: list[Evidence] = []
 
     # Agent 3 — Jobs (broadened: explicit cloud names catch postings where
     # 'Salesforce' is not adjacent to the product name)
-    for r in _safe_search(client.google_jobs, f"{quoted} ({_JOB_PRODUCT_TERMS})", num=20):
+    for r in _safe_search(client.google_jobs, f"{name_clause} ({_JOB_PRODUCT_TERMS})", num=20):
         evidence.append(
             Evidence(
                 source_type="job_posting",
@@ -102,7 +120,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         )
 
     # Agent 4 — News (broadened with product terms)
-    for r in _safe_search(client.google_news, f"{quoted} ({_NEWS_PRODUCT_TERMS})", num=20):
+    for r in _safe_search(client.google_news, f"{name_clause} ({_NEWS_PRODUCT_TERMS})", num=20):
         evidence.append(
             Evidence(
                 source_type="news",
@@ -113,7 +131,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         )
 
     # Agent 5 — Reviews
-    for r in _safe_search(client.google, f"{_REVIEW_SITES} {quoted} Salesforce", num=20):
+    for r in _safe_search(client.google, f"{_REVIEW_SITES} {name_clause} Salesforce", num=20):
         evidence.append(
             Evidence(
                 source_type="review",
@@ -124,7 +142,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
         )
 
     # Agent 6 — Case studies / partners
-    for r in _safe_search(client.google, f"{_PARTNER_SITES} {quoted} Salesforce case study", num=20):
+    for r in _safe_search(client.google, f"{_PARTNER_SITES} {name_clause} Salesforce case study", num=20):
         evidence.append(
             Evidence(
                 source_type="case_study",
@@ -137,7 +155,7 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
     # Agent 6.5 — Trailblazer Community / AppExchange (high-signal source for
     # CVS Sales Cloud and BCBSM Experience Cloud in prior runs). Mapped to
     # 'review' so existing QC recency rules apply.
-    for r in _safe_search(client.google, f"{_COMMUNITY_SITES} {quoted}", num=20):
+    for r in _safe_search(client.google, f"{_COMMUNITY_SITES} {name_clause}", num=20):
         evidence.append(
             Evidence(
                 source_type="review",
