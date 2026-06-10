@@ -90,3 +90,31 @@ def test_proximity_guard_rejects_distant_product():
         f"Body length: {len(body)}, result: {result}"
     )
 
+
+def test_agentforce_rejected_without_deployment_indicator():
+    """Payer near Agentforce but no deployment word — must NOT extract."""
+    body = (
+        "Devoted Health is a Medicare Advantage plan based in Waltham, MA. "
+        "Agentforce for Healthcare is a new Salesforce product available on "
+        "Trailhead with various learning modules and educational tutorials "
+        "for developers who want to learn about AI agents."
+    )
+    ev = _ev(body)
+    result = _extract_products_from_body(ev, {"Devoted Health", "Devoted"})
+    assert "Agentforce for Healthcare" not in result, (
+        f"Agentforce guard failed: matched without deployment indicator. result: {result}"
+    )
+
+
+def test_agentforce_accepted_with_payer_and_deployment_word():
+    """Payer + Agentforce + deployment indicator in same window — must extract."""
+    body = (
+        "Devoted Health signed a contract to deploy Agentforce for Healthcare "
+        "across its member-services team to automate prior-authorization triage."
+    )
+    ev = _ev(body)
+    result = _extract_products_from_body(ev, {"Devoted Health", "Devoted"})
+    assert "Agentforce for Healthcare" in result, (
+        f"Agentforce should have matched (payer + deploy/contract in window). result: {result}"
+    )
+

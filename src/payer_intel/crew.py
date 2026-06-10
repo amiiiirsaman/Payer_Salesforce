@@ -359,14 +359,42 @@ _PRODUCT_PATTERNS: dict[str, list[str]] = {
 # up Agentforce from distant boilerplate).
 _PROXIMITY_WINDOW = 600
 
+# "Agentforce" appears on nearly every Salesforce marketing page, Trailhead
+# tutorial and blog post. Standard proximity is not strong enough — require
+# both a payer alias AND a deployment-signal word inside a tighter window.
+_AGENTFORCE_PROXIMITY = 300
+_AGENTFORCE_DEPLOYMENT_INDICATORS = {
+    "deploy", "implement", "launch", "partner", "customer story",
+    "use case", "solution", "contract", "agreement", "pilot",
+    "rollout", "go live", "go-live", "production", "signed",
+}
+
+# Phrases in the LLM narrative indicating it itself found no real evidence —
+# used by _classify_with_llm to clear any spurious product mappings post-hoc.
+_NO_EVIDENCE_PHRASES: tuple[str, ...] = (
+    "no credible evidence",
+    "no evidence",
+    "generic navigation",
+    "generic trailhead",
+    "tutorial page",
+    "generic salesforce marketing",
+    "generic marketing material",
+    "case studies about other organizations",
+    "not specifically mention",
+    "does not mention",
+    "none specifically mention",
+)
+
 
 def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[str]:
     """Layer 1 deterministic extractor.
 
     Returns the set of SalesforceProduct.value strings literally present in
     ev.full_text within ±_PROXIMITY_WINDOW chars of a payer-alias mention.
-    Returns empty set when full_text is None (snippet-only items stay on the
-    LLM path) or when no alias mentions appear in the body.
+    Agentforce additionally requires a deployment-indicator word in the same
+    tight window (±_AGENTFORCE_PROXIMITY). Returns empty set when full_text
+    is None (snippet-only items stay on the LLM path) or when no alias
+    mentions appear in the body.
     """
     if not ev.full_text:
         return set()
@@ -387,7 +415,23 @@ def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[st
     if not alias_positions:
         return set()
     found: set[str] = set()
+
+    # Agentforce: tighter check — needs payer alias AND deployment indicator
+    # in same ±_AGENTFORCE_PROXIMITY window. Generic nav/tutorial pages fail.
+    payer_aliases_lower = {a.lower() for a in payer_aliases if a}
+    for m in re.finditer(r"agentforce", body_lower):
+        win_start = max(0, m.start() - _AGENTFORCE_PROXIMITY)
+        win_end = m.end() + _AGENTFORCE_PROXIMITY
+        window = body_lower[win_start:win_end]
+        if any(a in window for a in payer_aliases_lower) and any(
+            ind in window for ind in _AGENTFORCE_DEPLOYMENT_INDICATORS
+        ):
+            found.add("Agentforce for Healthcare")
+            break
+
     for product, patterns in _PRODUCT_PATTERNS.items():
+        if product == "Agentforce for Healthcare":
+            continue  # handled above with stricter check
         combined = "|".join(f"(?:{p})" for p in patterns)
         for m in re.finditer(combined, body, re.IGNORECASE):
             mid = (m.start() + m.end()) // 2
@@ -526,6 +570,24 @@ EVIDENCE (JSON array):
                 existing_ids = {id(e) for e in out[product]}
                 if id(ev) not in existing_ids:
                     out[product].append(ev)
+
+    # ── Narrative override ──────────────────────────────────────────────────
+    # If the LLM's own summary explicitly says there is no real evidence,
+    # clear any products the LLM or post-processing added. The narrative is
+    # the authoritative signal for these edge cases; mismatches show up as
+    # Yes verdicts paired with "no credible evidence" summaries.
+    summary_lower = summary.lower()
+    if any(phrase in summary_lower for phrase in _NO_EVIDENCE_PHRASES):
+        if out:
+            log.info(
+                "Narrative override: clearing %d product(s) for %s — summary indicates no evidence",
+                len(out), payer_name,
+            )
+            out.clear()
+            summary = (
+                summary
+                + " [All verdicts cleared by narrative override — no credible evidence detected.]"
+            )
     return out, summary
 
 
