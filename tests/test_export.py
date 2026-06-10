@@ -42,9 +42,9 @@ def test_excel_schema_and_freeze(tmp_path: Path):
     # Confidence in last 4 cols
     conf_idx = EXCEL_COLUMNS.index("Confidence Score") + 1
     assert ws.cell(row=2, column=conf_idx).value == "High"
-    # Source URLs pipe-joined
+    # Source URLs newline-joined
     src_idx = EXCEL_COLUMNS.index("Source URLs") + 1
-    assert "|" in ws.cell(row=2, column=src_idx).value
+    assert "\n" in ws.cell(row=2, column=src_idx).value
     # Key Evidence narrative populated
     ke_idx = EXCEL_COLUMNS.index("Key Evidence") + 1
     assert "Health Cloud" in (ws.cell(row=2, column=ke_idx).value or "")

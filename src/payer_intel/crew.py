@@ -49,6 +49,7 @@ log = logging.getLogger(__name__)
 _KNOWN_CASE_STUDIES: dict[str, str] = {
     "UnitedHealthcare": "https://www.salesforce.com/customer-success-stories/united-healthcare/",
     "Humana Inc.": "https://www.salesforce.com/customer-success-stories/humana/",
+    "Cigna Corporation": "https://www.salesforce.com/blog/future-of-cigna-personalization/",
 }
 
 
@@ -611,12 +612,17 @@ def assemble_record(
         if result.verdict != UsageVerdict.UNKNOWN:
             confidences.append(result.confidence)
 
-    # Source URLs = union from positive-verdict evidence
+    # Source URLs: prioritize evidence that drove Yes/Likely verdicts, then
+    # append any other evidence so payers with only Unknown verdicts still
+    # surface job-posting / news / community URLs for BD verification.
     urls: list[str] = []
     for product, evs in product_evidence.items():
         if rec.verdicts.get(product) in {"Yes", "Likely"}:
             urls.extend(e.url for e in evs if e.url)
-    rec.source_urls = list(dict.fromkeys(urls))
+    for e in all_evidence:
+        if e.url and e.url not in urls:
+            urls.append(e.url)
+    rec.source_urls = list(dict.fromkeys(urls))[:5]
 
     # Most recent evidence date
     rec.date_identified = _most_recent_date(all_evidence) or ""

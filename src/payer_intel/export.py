@@ -26,7 +26,7 @@ def _record_to_row(rec: PayerRecord) -> dict[str, str]:
     row = {
         "Payer Name": rec.payer_name,
         "Payer Type": rec.payer_type,
-        "Source URLs": " | ".join(dict.fromkeys(rec.source_urls)),
+        "Source URLs": "\n".join(dict.fromkeys(rec.source_urls)),
         "Date Identified": rec.date_identified,
         "Confidence Score": rec.confidence.value,
         "BD Notes": rec.bd_notes,
