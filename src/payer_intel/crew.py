@@ -45,11 +45,12 @@ log = logging.getLogger(__name__)
 
 
 # Canonical case-study URLs that Google Search routinely ranks outside the top
-# 20; injected directly so the body enricher always fetches them.
+# 20; injected directly so the body enricher always fetches them. Only true
+# deployment case studies — not aspirational blog posts — should appear here,
+# because qc rule 1 auto-promotes any case_study evidence to Yes/High.
 _KNOWN_CASE_STUDIES: dict[str, str] = {
     "UnitedHealthcare": "https://www.salesforce.com/customer-success-stories/united-healthcare/",
     "Humana Inc.": "https://www.salesforce.com/customer-success-stories/humana/",
-    "Cigna Corporation": "https://www.salesforce.com/blog/future-of-cigna-personalization/",
 }
 
 
@@ -375,6 +376,8 @@ _AGENTFORCE_DEPLOYMENT_INDICATORS = {
 _NO_EVIDENCE_PHRASES: tuple[str, ...] = (
     "no credible evidence",
     "no evidence",
+    "minimal credible evidence",
+    "minimal evidence",
     "generic navigation",
     "generic trailhead",
     "tutorial page",
@@ -409,6 +412,35 @@ def _alias_in_text(alias_lower: str, text_lower: str) -> bool:
     return bool(re.search(r"\b" + re.escape(alias_lower) + r"\b", text_lower))
 
 
+# Single-word aliases that are common English words and produce cross-payer
+# contamination when used for proximity matching (e.g. "devoted" appearing
+# near "Health Cloud" in an NYU Langone case study triggers a false positive
+# for Devoted Health). Filtered out of the proximity guard but still usable
+# by Layer 2 (LLM classifier) which has full context.
+_WEAK_ALIASES: frozenset[str] = frozenset({
+    "health", "care", "blue", "cross", "plan", "group", "first",
+    "community", "devoted", "oscar", "alliance", "essence", "kaiser",
+    "sanford", "emblem", "horizon", "independent", "priority", "partnership",
+    "point32health", "medstar", "geisinger", "excellus", "fallon",
+    "cigna", "aetna", "humana", "anthem", "optum",
+})
+
+
+def _is_strong_alias(alias: str) -> bool:
+    # Aliases used for proximity matching must be either multi-word,
+    # an acronym (all uppercase, length ≥ 3), or a distinctive long token
+    # not in the common-English-word stoplist. Common single words are
+    # rejected to prevent cross-payer contamination.
+    a = alias.strip()
+    if not a:
+        return False
+    if " " in a:
+        return True
+    if a.isupper() and len(a) >= 3:
+        return True
+    return len(a) > 6 and a.lower() not in _WEAK_ALIASES
+
+
 def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[str]:
     """Layer 1 deterministic extractor.
 
@@ -423,7 +455,12 @@ def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[st
         return set()
     body = ev.full_text
     body_lower = body.lower()
-    payer_aliases_lower = {a.lower() for a in payer_aliases if a}
+    # Strict alias set: multi-word, acronym, or distinctive long token.
+    # Falls back to the full payer name if every alias is filtered out.
+    strong = {a for a in payer_aliases if _is_strong_alias(a)}
+    if not strong:
+        strong = set(payer_aliases)
+    payer_aliases_lower = {a.lower() for a in strong if a}
     alias_positions: list[int] = []
     for needle in payer_aliases_lower:
         for m in re.finditer(r"\b" + re.escape(needle) + r"\b", body_lower):
