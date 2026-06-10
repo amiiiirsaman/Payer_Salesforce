@@ -79,10 +79,26 @@ _PARTNER_SITES = (
     "OR site:cognizant.com OR site:ibm.com"
 )
 _COMMUNITY_SITES = "site:trailhead.salesforce.com OR site:appexchange.salesforce.com"
+# CIO / executive interview & trade press sources. Surfaced the Geisinger /
+# Salesforce Marketing+Health Cloud quote that v5 missed (Aarete MS-01).
+_CIO_INTERVIEW_SITES = (
+    "site:deloitte.wsj.com OR site:deloitte.com/insights OR site:hbr.org "
+    "OR site:healthcareitnews.com OR site:modernhealthcare.com "
+    "OR site:healthtechmagazine.net"
+)
+# LinkedIn posts + member profiles + Pulse articles. Snippet-only evidence
+# (LinkedIn blocks unauthenticated httpx, so no _FETCH_DOMAINS entry).
+_LINKEDIN_SITES = (
+    "site:linkedin.com/posts/ OR site:linkedin.com/in/ OR site:linkedin.com/pulse/"
+)
+_LINKEDIN_TITLE_TERMS = (
+    '"Salesforce Marketing Cloud Specialist" OR "Health Cloud Administrator" '
+    'OR "Salesforce Developer" OR "Agentforce Developer" OR "Vlocity"'
+)
 _JOB_PRODUCT_TERMS = (
     'Salesforce OR "Sales Cloud" OR "Service Cloud" OR "Health Cloud" '
     'OR "Marketing Cloud" OR "Experience Cloud" OR "Data Cloud" '
-    'OR Pardot OR ExactTarget OR "CRM Analytics" OR Agentforce'
+    'OR Pardot OR ExactTarget OR "CRM Analytics" OR Agentforce OR Vlocity'
 )
 _NEWS_PRODUCT_TERMS = (
     'Salesforce OR "Health Cloud" OR "Data Cloud" OR "Marketing Cloud" '
@@ -102,6 +118,17 @@ def build_name_clause(name: str, aliases_raw: str | None) -> str:
     if len(deduped) == 1:
         return f'"{deduped[0]}"'
     return "(" + " OR ".join(f'"{n}"' for n in deduped) + ")"
+
+
+def build_excludes_set(payer: dict[str, str]) -> set[str]:
+    """Lowercased set of sibling-entity names to reject during attribution.
+
+    Mirrors build_name_clause but for the optional `search_excludes` CSV
+    column. Independence Blue Cross excludes "AmeriHealth Caritas" so its
+    sibling entity's job postings don't get cross-attributed (Aarete MS-05).
+    """
+    raw = payer.get("search_excludes") or ""
+    return {x.strip().lower() for x in raw.split("|") if x.strip()}
 
 
 def _safe_search(fn, *args, **kwargs) -> list[dict]:
@@ -205,6 +232,60 @@ def gather_evidence(payer: dict[str, str], client: SearchApiClient) -> list[Evid
             )
         )
 
+    # Agent 6.6 — CIO / executive interviews & healthcare trade press.
+    # The Geisinger Marketing+Health Cloud quote ran on deloitte.wsj.com which
+    # was not previously in scope (Aarete MS-01).
+    for r in _safe_search(
+        client.google,
+        f"{_CIO_INTERVIEW_SITES} {name_clause} Salesforce",
+        num=10,
+    ):
+        evidence.append(
+            Evidence(
+                source_type="case_study",
+                url=r.get("link", "") or "",
+                snippet=(r.get("snippet") or "")[:1200],
+                date=r.get("date"),
+            )
+        )
+
+    # Agent 6.7 — LinkedIn posts/profiles/pulse. Surfaces first-person
+    # platform-usage statements (Sanford intern, IBX developer) and
+    # product-specific employee titles (Aarete MS-02, MS-05, MS-06). Snippet-
+    # only — LinkedIn blocks unauthenticated httpx. Mapped to 'review' so QC's
+    # recent_review path applies.
+    for r in _safe_search(
+        client.google,
+        f'{_LINKEDIN_SITES} {name_clause} '
+        f'(Salesforce OR "Marketing Cloud" OR "Health Cloud" OR Vlocity OR Agentforce)',
+        num=15,
+    ):
+        evidence.append(
+            Evidence(
+                source_type="review",
+                url=r.get("link", "") or "",
+                snippet=r.get("snippet", ""),
+                date=r.get("date"),
+            )
+        )
+
+    # Agent 6.8 — LinkedIn employee-title pass. A named employee with a
+    # product-specific title ("Salesforce Marketing Cloud Specialist") is
+    # Tier-1 evidence per Aarete Part 3.
+    for r in _safe_search(
+        client.google,
+        f'site:linkedin.com/in/ {name_clause} ({_LINKEDIN_TITLE_TERMS})',
+        num=10,
+    ):
+        evidence.append(
+            Evidence(
+                source_type="review",
+                url=r.get("link", "") or "",
+                snippet=r.get("snippet", ""),
+                date=r.get("date"),
+            )
+        )
+
     # Agent 7 — Technographic fingerprint
     for h in fingerprint_domain(domain):
         evidence.append(
@@ -255,6 +336,13 @@ _FETCH_DOMAINS: frozenset[str] = frozenset({
     "mobihealthnews.com",
     "medcitynews.com",
     "beckershospitalreview.com",
+    # CIO / executive interview sources (Aarete MS-01)
+    "deloitte.wsj.com",
+    "deloitte.com",
+    "hbr.org",
+    "healthcareitnews.com",
+    "modernhealthcare.com",
+    "healthtechmagazine.net",
 })
 _MAX_BODY_CHARS = 4000
 _WS_RE = re.compile(r"\s+")
@@ -312,6 +400,9 @@ _PRODUCT_PATTERNS: dict[str, list[str]] = {
         r"prior authori[sz]ation",
         r"Vlocity Health",
         r"Vlocity Insurance",
+        r"OmniStudio",
+        r"Salesforce Industries",
+        r"Health Cloud Industry Edition",
     ],
     "Life Sciences Cloud": [r"Life Sciences Cloud"],
     "Financial Services Cloud": [r"Financial Services Cloud"],
@@ -412,6 +503,125 @@ def _alias_in_text(alias_lower: str, text_lower: str) -> bool:
     return bool(re.search(r"\b" + re.escape(alias_lower) + r"\b", text_lower))
 
 
+# Salesforce blog category/tag/author listings and paginated index pages
+# aggregate teasers from unrelated articles. A payer name appearing on
+# such a page is not evidence (Aarete FP-02, FP-07).
+_ZERO_EVIDENCE_URL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"/blog/category/", re.I),
+    re.compile(r"/blog/tag/", re.I),
+    re.compile(r"/blog/author/", re.I),
+    re.compile(r"/blog/page/\d+/", re.I),
+    re.compile(r"/blog/?$", re.I),
+)
+
+
+def _is_zero_evidence_url(url: str) -> bool:
+    if not url:
+        return False
+    return any(p.search(url) for p in _ZERO_EVIDENCE_URL_PATTERNS)
+
+
+# SI partner hosts whose brochures/whitepapers are only valid evidence when
+# the target payer is literally named in the body (Aarete FP-06).
+_SI_PARTNER_HOSTS: frozenset[str] = frozenset({
+    "accenture.com", "deloitte.com", "ibm.com", "cognizant.com",
+    "slalom.com", "silverlinecrm.com", "penrod.co",
+})
+
+
+def _si_partner_requires_payer_mention(
+    url: str, body: str | None, payer_aliases_lower: set[str]
+) -> bool:
+    """Return True ('drop this evidence') for an SI-partner page that never
+    names the payer in its body. Snippet-only items (body is None) get the
+    benefit of the doubt and are kept; the LLM will see them with full
+    SI-partner caveats in the prompt."""
+    if not url:
+        return False
+    host = (urlparse(url).hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in _SI_PARTNER_HOSTS):
+        return False
+    if not body:
+        return False
+    body_lower = body.lower()
+    return not any(_alias_in_text(a, body_lower) for a in payer_aliases_lower)
+
+
+# Customer-verb proximity check for salesforce.com /blog/ articles. Without
+# a deployment verb near a payer mention, the payer is just a backdrop in
+# an industry thought-leadership post and the article is not evidence
+# (Aarete FP-01).
+_CUSTOMER_VERB_RE = re.compile(
+    r"\b(implement(?:ed|s|ing)?|deployed|deploys?|deploying|uses?|using|"
+    r"selected|chose|migrated\s+to|customer\s+of|partnered\s+with|"
+    r"is\s+using|adopted)\b",
+    re.I,
+)
+_CUSTOMER_VERB_WINDOW = 400
+
+
+def _salesforce_blog_lacks_customer_verb(
+    url: str, body: str | None, payer_aliases_lower: set[str]
+) -> bool:
+    """Return True ('drop this evidence') for a salesforce.com /blog/ URL
+    that surfaced via search but never pairs a payer mention with a
+    customer/deployment verb within ±_CUSTOMER_VERB_WINDOW chars."""
+    if not url:
+        return False
+    host = (urlparse(url).hostname or "").lower()
+    if not (host == "salesforce.com" or host == "www.salesforce.com"):
+        return False
+    if "/blog/" not in url.lower():
+        return False
+    if not body:
+        # Snippet-only \u2014 keep; LLM sees the FP-01 guardrail in the prompt.
+        return False
+    body_lower = body.lower()
+    for alias in payer_aliases_lower:
+        for m in re.finditer(r"\b" + re.escape(alias) + r"\b", body_lower):
+            start = max(0, m.start() - _CUSTOMER_VERB_WINDOW)
+            end = m.end() + _CUSTOMER_VERB_WINDOW
+            if _CUSTOMER_VERB_RE.search(body_lower[start:end]):
+                return False
+    return True
+
+
+def _evidence_body_contains_exclude(
+    body: str | None, excludes_lower: set[str], payer_aliases_lower: set[str]
+) -> bool:
+    """Return True ('drop this evidence') if the body names a sibling-entity
+    exclude term but never names the primary payer within ±_CUSTOMER_VERB_WINDOW
+    chars of any alias. AmeriHealth Caritas job postings should not be
+    cross-attributed to Independence Blue Cross (Aarete MS-05)."""
+    if not body or not excludes_lower:
+        return False
+    body_lower = body.lower()
+    hit_exclude = any(_alias_in_text(x, body_lower) for x in excludes_lower)
+    if not hit_exclude:
+        return False
+    # Body mentions a sibling. Keep only if it ALSO mentions the primary
+    # payer with no co-mention of the sibling in the same window.
+    return not any(_alias_in_text(a, body_lower) for a in payer_aliases_lower)
+
+
+def _should_drop_evidence(
+    ev: Evidence, payer_aliases_lower: set[str], excludes_lower: set[str]
+) -> bool:
+    """Composite URL/body gate used by both the deterministic extractor and
+    the LLM evidence_blob builder. Centralises FP-01/FP-02/FP-06/FP-07 and
+    MS-05 rejection logic so the two layers stay consistent."""
+    if _is_zero_evidence_url(ev.url):
+        return True
+    body = ev.full_text
+    if _si_partner_requires_payer_mention(ev.url, body, payer_aliases_lower):
+        return True
+    if _salesforce_blog_lacks_customer_verb(ev.url, body, payer_aliases_lower):
+        return True
+    if _evidence_body_contains_exclude(body, excludes_lower, payer_aliases_lower):
+        return True
+    return False
+
+
 # Single-word aliases that are common English words and produce cross-payer
 # contamination when used for proximity matching (e.g. "devoted" appearing
 # near "Health Cloud" in an NYU Langone case study triggers a false positive
@@ -441,17 +651,25 @@ def _is_strong_alias(alias: str) -> bool:
     return len(a) > 6 and a.lower() not in _WEAK_ALIASES
 
 
-def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[str]:
+def _extract_products_from_body(
+    ev: Evidence,
+    payer_aliases: set[str],
+    excludes: set[str] | None = None,
+) -> set[str]:
     """Layer 1 deterministic extractor.
 
     Returns the set of SalesforceProduct.value strings literally present in
     ev.full_text within ±_PROXIMITY_WINDOW chars of a payer-alias mention.
     Agentforce additionally requires a deployment-indicator word in the same
     tight window (±_AGENTFORCE_PROXIMITY). Returns empty set when full_text
-    is None (snippet-only items stay on the LLM path) or when no alias
-    mentions appear in the body.
+    is None (snippet-only items stay on the LLM path), when no alias
+    mentions appear in the body, or when URL/body gating rejects the item.
     """
     if not ev.full_text:
+        return set()
+    payer_aliases_lower = {a.lower() for a in payer_aliases if a}
+    excludes_lower = excludes or set()
+    if _should_drop_evidence(ev, payer_aliases_lower, excludes_lower):
         return set()
     body = ev.full_text
     body_lower = body.lower()
@@ -460,9 +678,9 @@ def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[st
     strong = {a for a in payer_aliases if _is_strong_alias(a)}
     if not strong:
         strong = set(payer_aliases)
-    payer_aliases_lower = {a.lower() for a in strong if a}
+    strong_aliases_lower = {a.lower() for a in strong if a}
     alias_positions: list[int] = []
-    for needle in payer_aliases_lower:
+    for needle in strong_aliases_lower:
         for m in re.finditer(r"\b" + re.escape(needle) + r"\b", body_lower):
             alias_positions.append(m.start())
     if not alias_positions:
@@ -475,7 +693,7 @@ def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[st
         win_start = max(0, m.start() - _AGENTFORCE_PROXIMITY)
         win_end = m.end() + _AGENTFORCE_PROXIMITY
         window = body_lower[win_start:win_end]
-        if any(_alias_in_text(a, window) for a in payer_aliases_lower) and any(
+        if any(_alias_in_text(a, window) for a in strong_aliases_lower) and any(
             ind in window for ind in _AGENTFORCE_DEPLOYMENT_INDICATORS
         ):
             found.add("Agentforce for Healthcare")
@@ -505,7 +723,20 @@ def _classify_with_llm(
     payer_aliases: set[str] = {payer_name} | {
         a.strip() for a in aliases_raw.split("|") if a.strip()
     }
+    payer_aliases_lower: set[str] = {a.lower() for a in payer_aliases}
+    excludes_lower: set[str] = build_excludes_set(payer)
     if not evidence:
+        return {}, ""
+    # Drop URL/body-gated items before the LLM sees them. Keeps prompt focused
+    # and prevents the LLM from being tempted to map rejected content.
+    filtered_evidence: list[Evidence] = [
+        e for e in evidence
+        if not _should_drop_evidence(e, payer_aliases_lower, excludes_lower)
+    ]
+    dropped = len(evidence) - len(filtered_evidence)
+    if dropped:
+        log.info("Pre-classifier gate dropped %d evidence item(s) for %s", dropped, payer_name)
+    if not filtered_evidence:
         return {}, ""
     products_list = "\n".join(f"- {p.value}" for p in SalesforceProduct)
     evidence_blob = json.dumps(
@@ -517,9 +748,11 @@ def _classify_with_llm(
                 "text": (e.full_text or e.snippet)[:3000],
                 "date": e.date,
                 "fingerprint_product": e.matched_product.value if e.matched_product else None,
-                "regex_products": sorted(_extract_products_from_body(e, payer_aliases)),
+                "regex_products": sorted(
+                    _extract_products_from_body(e, payer_aliases, excludes_lower)
+                ),
             }
-            for i, e in enumerate(evidence)
+            for i, e in enumerate(filtered_evidence)
         ],
         ensure_ascii=False,
     )
@@ -533,6 +766,17 @@ ALLOWED PRODUCTS (use these exact strings as JSON keys):
 Rules:
 - Only assign an evidence item to a product if the text (or its fingerprint_product) explicitly names that product
   or uses a clearly equivalent term.
+- 'Service Cloud' requires the source to explicitly name "Service Cloud", "contact center",
+  "case management", or "omni-channel service". A generic Salesforce case study that describes
+  member journeys, marketing, or data capabilities maps to Marketing Cloud or Data Cloud —
+  NEVER Service Cloud.
+- Whitepapers/brochures from Accenture, Deloitte, IBM, Cognizant, or Slalom are only valid evidence
+  when the payer is literally named in the body. If the payer name is absent, skip the item.
+- A named employee with a product-specific job title in their LinkedIn profile is Tier-1 evidence.
+  Titles like "Salesforce Marketing Cloud Specialist", "Health Cloud Administrator",
+  "Agentforce Developer", or "Vlocity Manager" at the target payer count as direct deployment
+  signals for the named product. CIO/VP-level executive interviews that name a Salesforce product
+  are also Tier-1.
 - Map specific technical terms / legacy product names to their parent clouds:
     "Pardot"                                          ⇒ 'Marketing Cloud Account Engagement (Pardot)'
     "SFMC", "ExactTarget", "Email Studio", "et.com", "Marketing Platform"   ⇒ 'Marketing Cloud'
@@ -542,7 +786,8 @@ Rules:
       (use 'Sales Cloud' ONLY when the text explicitly mentions sales pipeline, opportunities, or leads;
        for healthcare/payer contexts — member analytics, claims data, population health — always map to 'Data Cloud')
     "CPQ", "SteelBrick", "Revenue Cloud"               ⇒ 'Revenue Cloud (CPQ)'
-    "Vlocity Health", "Vlocity Insurance", "Health Cloud" ⇒ 'Health Cloud'
+    "Vlocity Health", "Vlocity Insurance", "OmniStudio", "Salesforce Industries",
+      "Health Cloud Industry Edition", "Health Cloud"   ⇒ 'Health Cloud'
     "Agentforce", "Einstein Copilot for Health"        ⇒ 'Agentforce for Healthcare'
     "CareIQ", "Care IQ"                                ⇒ 'Sales Cloud' (Cigna's CareIQ platform per published case study)
     "Care Connect"                                     ⇒ 'Health Cloud' (Blue Shield of California's Care Connect per Sep 2023 press release)
@@ -601,14 +846,14 @@ EVIDENCE (JSON array):
     for product, idxs in mappings.items():
         if product not in valid_products:
             continue
-        out[product] = [evidence[i] for i in idxs if 0 <= i < len(evidence)]
+        out[product] = [filtered_evidence[i] for i in idxs if 0 <= i < len(filtered_evidence)]
 
     # ── Post-processing safety net (Layer 1 enforcement) ────────────────────
     # If the LLM missed a product that regex found explicitly in the page
     # body, add it here in Python. Deterministic, cannot be overridden by
     # LLM instruction-following failures.
-    for i, ev in enumerate(evidence):
-        regex_hits = _extract_products_from_body(ev, payer_aliases)
+    for i, ev in enumerate(filtered_evidence):
+        regex_hits = _extract_products_from_body(ev, payer_aliases, excludes_lower)
         for product in regex_hits:
             if product not in valid_products:
                 continue

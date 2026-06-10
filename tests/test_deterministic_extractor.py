@@ -118,3 +118,143 @@ def test_agentforce_accepted_with_payer_and_deployment_word():
         f"Agentforce should have matched (payer + deploy/contract in window). result: {result}"
     )
 
+
+# ─── v6 fixes: Vlocity / OmniStudio synonyms (Aarete MS-04) ─────────────────
+EMBLEM_ALIASES = {"emblemhealth", "emblem health", "ghi", "hip health plan"}
+
+
+def test_vlocity_health_maps_to_health_cloud():
+    ev = _ev(
+        "EmblemHealth Inc. CRM Program Analyst supports digital transformation "
+        "through Sales Cloud, Service Cloud, and Vlocity Health portals."
+    )
+    result = _extract_products_from_body(ev, EMBLEM_ALIASES)
+    assert "Health Cloud" in result
+
+
+def test_omnistudio_maps_to_health_cloud():
+    ev = _ev(
+        "EmblemHealth migrated its provider portal to OmniStudio on Salesforce "
+        "Industries to streamline prior authorization workflows."
+    )
+    result = _extract_products_from_body(ev, EMBLEM_ALIASES)
+    assert "Health Cloud" in result
+
+
+# ─── v6 fixes: URL-gating rejection (Aarete FP-01, FP-02, FP-06, FP-07) ─────
+def _ev_at(url: str, full_text: str) -> Evidence:
+    ev = Evidence(source_type="case_study", url=url, snippet="teaser")
+    ev.full_text = full_text
+    return ev
+
+
+def test_blog_category_page_returns_empty():
+    """Aarete FP-02: BCBSM appearing in a /blog/category/ index → no evidence."""
+    body = (
+        "Blue Cross Blue Shield of Michigan stories. "
+        "Marketing Cloud personalizes member outreach. Data Cloud unifies data."
+    )
+    ev = _ev_at(
+        "https://www.salesforce.com/blog/category/personalization/",
+        body,
+    )
+    result = _extract_products_from_body(
+        ev, {"Blue Cross Blue Shield of Michigan", "BCBSM"}
+    )
+    assert result == set(), f"FP-02 regression: category page extracted {result}"
+
+
+def test_blog_author_page_returns_empty():
+    """Aarete FP-07: payer-name on author listing page → no evidence."""
+    body = (
+        "Stories by Stephanie Buscemi. UnitedHealthcare is one of many customers "
+        "exploring Marketing Cloud and Health Cloud personalization."
+    )
+    ev = _ev_at(
+        "https://www.salesforce.com/blog/author/stephanie-buscemi/",
+        body,
+    )
+    result = _extract_products_from_body(
+        ev, {"unitedhealthcare", "unitedhealth group"}
+    )
+    assert result == set(), f"FP-07 regression: author page extracted {result}"
+
+
+def test_salesforce_blog_without_customer_verb_returns_empty():
+    """Aarete FP-01: Cigna mentioned in a generic /blog/ post with no
+    deployment verb → not evidence."""
+    body = (
+        "Improve member engagement strategies. Many payers including Cigna "
+        "are exploring new approaches. Health Cloud enables proactive care "
+        "for members across the healthcare ecosystem."
+    )
+    ev = _ev_at(
+        "https://www.salesforce.com/blog/improve-member-engagement-strategies/",
+        body,
+    )
+    result = _extract_products_from_body(ev, {"cigna", "cigna group"})
+    assert result == set(), f"FP-01 regression: blog without verb extracted {result}"
+
+
+def test_salesforce_blog_with_customer_verb_extracts():
+    """FP-01 control: same blog URL but with a deployment verb adjacent to the
+    payer mention → extraction proceeds."""
+    body = (
+        "Cigna Corporation deployed Health Cloud across its member-services team to "
+        "improve engagement and care coordination."
+    )
+    ev = _ev_at(
+        "https://www.salesforce.com/blog/improve-member-engagement-strategies/",
+        body,
+    )
+    result = _extract_products_from_body(
+        ev, {"Cigna Corporation", "Cigna Group", "Cigna"}
+    )
+    assert "Health Cloud" in result
+
+
+def test_si_partner_brochure_without_payer_name_returns_empty():
+    """Aarete FP-06: Accenture brochure that never names Elevance → discard."""
+    body = (
+        "Accenture Salesforce Service Cloud telecommunications industry "
+        "transformation overview. Carriers can modernize contact centers."
+    )
+    ev = _ev_at(
+        "https://www.accenture.com/whitepaper.pdf",
+        body,
+    )
+    result = _extract_products_from_body(
+        ev, {"elevance health", "anthem", "anthem inc"}
+    )
+    assert result == set(), f"FP-06 regression: unaffiliated SI brochure extracted {result}"
+
+
+def test_si_partner_brochure_with_payer_name_extracts():
+    """FP-06 control: same Accenture URL but body names the payer."""
+    body = (
+        "Elevance Health partnered with Accenture to deploy Salesforce Service "
+        "Cloud for member care management at scale."
+    )
+    ev = _ev_at(
+        "https://www.accenture.com/case-study.pdf",
+        body,
+    )
+    result = _extract_products_from_body(ev, {"elevance health", "anthem"})
+    assert "Service Cloud" in result
+
+
+def test_sibling_entity_body_with_excludes_returns_empty():
+    """Aarete MS-05: AmeriHealth Caritas job posting body should not be
+    cross-attributed to Independence Blue Cross."""
+    body = (
+        "AmeriHealth Caritas is hiring a Salesforce Marketing Cloud Specialist "
+        "to drive member engagement campaigns across our Medicaid plans."
+    )
+    ev = _ev_at("https://jobs.example.com/posting", body)
+    excludes = {"amerihealth caritas", "amerihealth new jersey", "amerihealth nj"}
+    result = _extract_products_from_body(
+        ev, {"independence blue cross", "ibx"}, excludes
+    )
+    assert result == set(), f"MS-05 regression: sibling body extracted {result}"
+
+
