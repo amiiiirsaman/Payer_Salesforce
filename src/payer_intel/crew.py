@@ -464,23 +464,20 @@ _AGENTFORCE_DEPLOYMENT_INDICATORS = {
 
 # Phrases in the LLM narrative indicating it itself found no real evidence —
 # used by _classify_with_llm to clear any spurious product mappings post-hoc.
+# Phrases must signal a GLOBAL no-evidence verdict for the payer, not a
+# per-product disclaimer (e.g. "no evidence for Marketing Cloud" is fine —
+# the payer may still have Service Cloud).
 _NO_EVIDENCE_PHRASES: tuple[str, ...] = (
-    "no credible evidence",
-    "no evidence",
-    "minimal credible evidence",
-    "minimal evidence",
-    "generic navigation",
-    "generic trailhead",
-    "tutorial page",
-    "generic salesforce marketing",
-    "generic marketing material",
-    "case studies about other organizations",
-    "not specifically mention",
-    "does not mention",
-    "none specifically mention",
-    "different entity",
-    "different organization",
-    "does not appear to use",
+    "no credible evidence of salesforce",
+    "no credible evidence of any salesforce",
+    "no credible evidence was found",
+    "no credible evidence of product deployment",
+    "no salesforce deployment evidence",
+    "no salesforce product deployment",
+    "does not appear to use salesforce",
+    "does not appear to deploy salesforce",
+    "no evidence of salesforce deployment",
+    "no evidence of any salesforce",
 )
 
 
@@ -777,6 +774,18 @@ Rules:
   "Agentforce Developer", or "Vlocity Manager" at the target payer count as direct deployment
   signals for the named product. CIO/VP-level executive interviews that name a Salesforce product
   are also Tier-1.
+- A named employee LinkedIn profile (linkedin.com/in/, /pulse/, /posts/) that contains a direct
+  implementation statement for a specific Salesforce product at the target payer — phrases like
+  "implemented", "managed the implementation of", "spearheaded the implementation of",
+  "deployed", "administered", "lead developer for", "architected" — is Tier-2 evidence and MUST
+  be included in `mappings` for that product. Do not skip such items because they are LinkedIn-
+  only; the deterministic QC layer will combine multiple LinkedIn employees or pair them with
+  technographic / job-posting signals to set the final verdict.
+- HOWEVER, a LinkedIn profile that describes a FORMER employee (e.g. "worked at X from 2013 to 2016",
+  "previously at X", "ex-X", or any employment with an explicit end date in the past and no
+  current role at the payer) is NOT current evidence. Do NOT include former-employee profiles in
+  `mappings`. Mention them in the narrative as historical context if relevant, but they do not
+  support a current-deployment verdict.
 - Map specific technical terms / legacy product names to their parent clouds:
     "Pardot"                                          ⇒ 'Marketing Cloud Account Engagement (Pardot)'
     "SFMC", "ExactTarget", "Email Studio", "et.com", "Marketing Platform"   ⇒ 'Marketing Cloud'
