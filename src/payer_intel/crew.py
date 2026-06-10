@@ -384,7 +384,29 @@ _NO_EVIDENCE_PHRASES: tuple[str, ...] = (
     "not specifically mention",
     "does not mention",
     "none specifically mention",
+    "different entity",
+    "different organization",
+    "does not appear to use",
 )
+
+
+# URLs to drop from BD output when the payer has no positive verdicts —
+# generic Salesforce marketing/tutorial pages and payer's own-domain pages.
+_NON_EVIDENCE_URL_PATTERNS: tuple[str, ...] = (
+    "salesforce.com/eu/",
+    "salesforce.com/nl/",
+    "salesforce.com/es/",
+    "salesforce.com/de/",
+    "trailhead.salesforce.com/content/learn/",
+)
+
+
+def _alias_in_text(alias_lower: str, text_lower: str) -> bool:
+    # Word-boundary alias match prevents short aliases (e.g. "Blue Shield"
+    # for BCBS Louisiana) from spuriously matching unrelated contexts.
+    if not alias_lower:
+        return False
+    return bool(re.search(r"\b" + re.escape(alias_lower) + r"\b", text_lower))
 
 
 def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[str]:
@@ -401,30 +423,22 @@ def _extract_products_from_body(ev: Evidence, payer_aliases: set[str]) -> set[st
         return set()
     body = ev.full_text
     body_lower = body.lower()
+    payer_aliases_lower = {a.lower() for a in payer_aliases if a}
     alias_positions: list[int] = []
-    for alias in payer_aliases:
-        if not alias:
-            continue
-        needle = alias.lower()
-        start = 0
-        while True:
-            idx = body_lower.find(needle, start)
-            if idx == -1:
-                break
-            alias_positions.append(idx)
-            start = idx + 1
+    for needle in payer_aliases_lower:
+        for m in re.finditer(r"\b" + re.escape(needle) + r"\b", body_lower):
+            alias_positions.append(m.start())
     if not alias_positions:
         return set()
     found: set[str] = set()
 
     # Agentforce: tighter check — needs payer alias AND deployment indicator
     # in same ±_AGENTFORCE_PROXIMITY window. Generic nav/tutorial pages fail.
-    payer_aliases_lower = {a.lower() for a in payer_aliases if a}
     for m in re.finditer(r"agentforce", body_lower):
         win_start = max(0, m.start() - _AGENTFORCE_PROXIMITY)
         win_end = m.end() + _AGENTFORCE_PROXIMITY
         window = body_lower[win_start:win_end]
-        if any(a in window for a in payer_aliases_lower) and any(
+        if any(_alias_in_text(a, window) for a in payer_aliases_lower) and any(
             ind in window for ind in _AGENTFORCE_DEPLOYMENT_INDICATORS
         ):
             found.add("Agentforce for Healthcare")
@@ -633,6 +647,27 @@ def assemble_record(
         rec.confidence = max(confidences, key=lambda c: order[c])
     else:
         rec.confidence = ConfidenceScore.LOW
+
+    # Low-confidence payers: drop generic marketing/tutorial pages and the
+    # payer's own-domain pages so BD doesn't mistake them for evidence.
+    if rec.confidence == ConfidenceScore.LOW:
+        payer_domain = (payer.get("domain") or "").lower().strip()
+        filtered: list[str] = []
+        for u in rec.source_urls:
+            ul = u.lower()
+            if any(p in ul for p in _NON_EVIDENCE_URL_PATTERNS):
+                continue
+            if payer_domain and payer_domain in ul:
+                continue
+            filtered.append(u)
+        rec.source_urls = filtered or ["No Salesforce-specific evidence found"]
+
+    if rec.confidence == ConfidenceScore.HIGH:
+        rec.bd_notes = "Confirmed deployment \u2014 reference in BD outreach."
+    elif rec.confidence == ConfidenceScore.MEDIUM:
+        rec.bd_notes = "Likely deployment \u2014 validate via direct outreach before referencing."
+    else:
+        rec.bd_notes = "No confirmed deployment \u2014 potential greenfield opportunity."
 
     return rec
 
