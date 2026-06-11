@@ -57,12 +57,68 @@ def test_si_partner_keep_when_payer_named():
     )
 
 
-def test_si_partner_keep_when_body_missing():
-    # Snippet-only items get benefit of the doubt — LLM sees the guardrail.
+def test_si_partner_keep_when_body_and_snippet_missing():
+    # Both body and snippet empty → no text to evaluate; let LLM see it
+    # with the FP-06 prompt guardrail.
     assert not _si_partner_requires_payer_mention(
         "https://www.deloitte.com/insights/x.html",
         None,
         {"geisinger"},
+        snippet=None,
+    )
+
+
+def test_si_partner_drop_when_alias_only_in_url_fragment():
+    # FP-06 strict: "anthem" appearing only inside a .pdf path fragment
+    # is not a visible mention. Mirrors the v6.1.1 Elevance/Accenture case.
+    assert _si_partner_requires_payer_mention(
+        "https://www.accenture.com/brochure.pdf",
+        (
+            "Martha uses her agent desktop, powered by Salesforce Service "
+            "Cloud case ... pdf-68/accenture-global-anthem-pov.pdf. 7 "
+            "Northridge Group State of Customer ..."
+        ),
+        {"elevance health", "anthem"},
+    )
+
+
+def test_si_partner_keep_when_alias_visible_outside_urls():
+    assert not _si_partner_requires_payer_mention(
+        "https://www.accenture.com/brochure.pdf",
+        (
+            "Anthem rolled out Service Cloud across member services. See "
+            "https://www.accenture.com/global-pov.pdf for the full case."
+        ),
+        {"elevance health", "anthem"},
+    )
+
+
+def test_si_partner_drop_snippet_only_without_payer():
+    # Body unavailable (e.g. PDF could not be fetched). Snippet does not
+    # name the payer → drop per FP-06 strict.
+    assert _si_partner_requires_payer_mention(
+        "https://www.accenture.com/brochure.pdf",
+        None,
+        {"elevance health", "anthem"},
+        snippet="Accenture Salesforce Service Cloud telecommunications overview.",
+    )
+
+
+def test_si_partner_keep_snippet_only_when_payer_named():
+    assert not _si_partner_requires_payer_mention(
+        "https://www.accenture.com/brochure.pdf",
+        None,
+        {"elevance health", "anthem"},
+        snippet="Elevance Health partnered with Accenture on Service Cloud.",
+    )
+
+
+def test_si_partner_drop_when_snippet_payer_only_in_url():
+    assert _si_partner_requires_payer_mention(
+        "https://www.accenture.com/brochure.pdf",
+        None,
+        {"elevance health", "anthem"},
+        snippet="See accenture-anthem-pov.pdf for details.",
     )
 
 

@@ -525,23 +525,46 @@ _SI_PARTNER_HOSTS: frozenset[str] = frozenset({
     "slalom.com", "silverlinecrm.com", "penrod.co",
 })
 
+# URL-like tokens stripped before checking for visible payer mentions, so
+# a sibling-file reference such as "accenture-global-anthem-pov.pdf" does
+# not satisfy FP-06 for an Anthem/Elevance payer alias.
+_URL_LIKE_RE = re.compile(
+    r"https?://\S+"
+    r"|www\.\S+"
+    r"|\S*\.(?:pdf|html?|aspx|docx?|php|jsp|xml)\b\S*",
+    re.I,
+)
+
+
+def _strip_url_like(text: str) -> str:
+    return _URL_LIKE_RE.sub(" ", text)
+
 
 def _si_partner_requires_payer_mention(
-    url: str, body: str | None, payer_aliases_lower: set[str]
+    url: str,
+    body: str | None,
+    payer_aliases_lower: set[str],
+    snippet: str | None = None,
 ) -> bool:
     """Return True ('drop this evidence') for an SI-partner page that never
-    names the payer in its body. Snippet-only items (body is None) get the
-    benefit of the doubt and are kept; the LLM will see them with full
-    SI-partner caveats in the prompt."""
+    names the payer in its visible body or snippet text. URL paths and
+    sibling-file references inside the text are stripped before the alias
+    check (Aarete FP-06): a Salesforce Service Cloud Accenture brochure
+    that only references the payer via a link like ``anthem-pov.pdf`` is
+    not evidence for Anthem/Elevance Health.
+
+    When both body and snippet are empty the item is kept; the LLM will
+    see the URL-only item with the FP-06 guardrail already in its prompt.
+    """
     if not url:
         return False
     host = (urlparse(url).hostname or "").lower()
     if not any(host == h or host.endswith("." + h) for h in _SI_PARTNER_HOSTS):
         return False
-    if not body:
+    visible = _strip_url_like(((body or "") + " " + (snippet or "")).lower())
+    if not visible.strip():
         return False
-    body_lower = body.lower()
-    return not any(_alias_in_text(a, body_lower) for a in payer_aliases_lower)
+    return not any(_alias_in_text(a, visible) for a in payer_aliases_lower)
 
 
 # Customer-verb proximity check for salesforce.com /blog/ articles. Without
@@ -610,7 +633,9 @@ def _should_drop_evidence(
     if _is_zero_evidence_url(ev.url):
         return True
     body = ev.full_text
-    if _si_partner_requires_payer_mention(ev.url, body, payer_aliases_lower):
+    if _si_partner_requires_payer_mention(
+        ev.url, body, payer_aliases_lower, snippet=ev.snippet
+    ):
         return True
     if _salesforce_blog_lacks_customer_verb(ev.url, body, payer_aliases_lower):
         return True
