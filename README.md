@@ -3,7 +3,7 @@
 An automated multi-agent pipeline that, given a CSV of US health-plan payers, produces an Excel workbook scoring each payer on **11 Salesforce products** with verdicts (`Yes` / `Likely` / `No` / `Unknown`), confidence scores, source URLs, and a narrative key-evidence summary suitable for BD outreach.
 
 ```
-seed_payers.csv  →  [11-agent pipeline]  →  Aarete_BD_Salesforce_Payer_Intelligence_YYYYMMDD.xlsx
+seed_payers.csv  →  [11-agent pipeline]  →  enterprise_BD_Salesforce_Payer_Intelligence_YYYYMMDD.xlsx
 ```
 
 ---
@@ -53,7 +53,7 @@ BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5-20250929-v2:0
 python main.py --seed data/seed_payers_smoke.csv --out out/smoke
 
 # 5. Open the workbook
-ii out/smoke/Aarete_BD_Salesforce_Payer_Intelligence_*.xlsx
+ii out/smoke/enterprise_BD_Salesforce_Payer_Intelligence_*.xlsx
 ```
 
 Full 62-payer batches live in [data/seed_payers_62.csv](data/seed_payers_62.csv) (or the 3 split batch files for parallel execution).
@@ -149,7 +149,7 @@ All 11 agent constructors live in [src/payer_intel/agents.py](src/payer_intel/ag
 8. **Layer 2 — `_classify_with_llm`** — Bedrock Claude Sonnet 4.5 receives the filtered evidence list with regex hints, strict JSON output schema, and the FP-01/05/06/07 + MS-04/05/06 guards inlined into the prompt (former-employee rule, Tier-1 employee-title rule, etc.). Returns `{product: [evidence_idx]}` + narrative summary.
 9. **QC — `qc.score`** — per product, applies the rule ladder in [qc.py](src/payer_intel/qc.py) (see [QC rule ladder](#qc-rule-ladder)).
 10. **`assemble_record`** — merges per-product verdicts, applies the narrative-override rule (a hard "no credible evidence" line in the summary clears any straggling LIKELY verdicts), dedupes source URLs, computes overall confidence.
-11. **`write_excel`** ([export.py](src/payer_intel/export.py)) — emits `Aarete_BD_Salesforce_Payer_Intelligence_YYYYMMDD.xlsx` with a Data sheet and a Summary dashboard.
+11. **`write_excel`** ([export.py](src/payer_intel/export.py)) — emits `enterprise_BD_Salesforce_Payer_Intelligence_YYYYMMDD.xlsx` with a Data sheet and a Summary dashboard.
 
 ---
 
@@ -181,7 +181,7 @@ Recency windows: jobs/news **365 d**, reviews **730 d**. LinkedIn URLs bypass th
 
 ## False-positive guards
 
-The seven guards developed against the Aarete BD verification doc. Each maps to a callable in [crew.py](src/payer_intel/crew.py).
+The seven guards developed against the enterprise BD verification doc. Each maps to a callable in [crew.py](src/payer_intel/crew.py).
 
 | Code | Risk | Enforcing function |
 | --- | --- | --- |
@@ -310,4 +310,4 @@ Highlights of the test suite:
 
 ## License
 
-Internal Aarete LLC use. Not for external redistribution.
+Internal enterprise LLC use. Not for external redistribution.
